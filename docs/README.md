@@ -8,6 +8,8 @@ contribution workflow and validation requirements.
 
 | Topic | Guide |
 | --- | --- |
+| Android / AYN Thor port assessment and continuation | [Android handoff](android-thor/HANDOFF.md) |
+| Android implementation milestones and evidence log | [Milestone ledger](android-thor/MILESTONES.md) |
 | First build and runtime setup | [Getting started](getting-started.md) |
 | Toolchains, targets, and build checks | [Building](building.md) |
 | Engine images, source layout and lifecycle | [Engine architecture](architecture.md) |

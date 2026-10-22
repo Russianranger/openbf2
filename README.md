@@ -9,6 +9,9 @@ successful compilation or a diagnostic executable does not establish a playable 
 
 ## Start here
 
+- [AYN Thor Android port handoff](docs/android-thor/HANDOFF.md): this fork's assessment,
+  milestone ledger, controller/bot design and persistent offline career plan. Planning only;
+  no functional Android port is claimed yet.
 - [Getting started](docs/getting-started.md): toolchains, build targets, and runtime setup.
 - [Engine architecture](docs/architecture.md): image boundaries, source layout, and lifecycle.
 - [Development guide](docs/development.md): recovery evidence, code conventions, and validation.
