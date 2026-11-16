@@ -47,7 +47,7 @@ set(BF2_BUILD_MACOS OFF)
 set(BF2_BUILD_POSIX OFF)
 if(MSVC)
     # The two Windows configurations, selected by pointer width below.
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+elseif((CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID) AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(BF2_BUILD_LINUX ON)
     set(BF2_BUILD_POSIX ON)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -69,7 +69,13 @@ elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
     # configuration is a native portability target and must acquire its own pointer-bearing
     # layouts while preserving the shipped wire/file widths.
     set(BF2_BUILD_X64 ON)
-    if(BF2_BUILD_LINUX)
+    if(ANDROID)
+        if(NOT ANDROID_ABI STREQUAL "arm64-v8a")
+            message(FATAL_ERROR "OpenBF2 Android requires arm64-v8a")
+        endif()
+        set(BF2_NATIVE_ARCH "android-arm64")
+        message(STATUS "Configuring the Bionic ARM64 dedicated server and AI plug-in")
+    elseif(BF2_BUILD_LINUX)
         set(BF2_NATIVE_ARCH "linux-x64")
         message(STATUS
             "Configuring the native Linux x86-64 dedicated-server port (bf2 + libdice_py.so). "
@@ -609,7 +615,11 @@ if(BF2_BUILD_LINUX)
     # same functions in both.
     set(CURSES_NEED_NCURSES TRUE)
     set(CURSES_NEED_WIDE TRUE)
-    find_package(Curses REQUIRED)
+    if(ANDROID)
+        set(CURSES_INCLUDE_DIRS "${BF2_ROOT}/PortShim/android")
+    else()
+        find_package(Curses REQUIRED)
+    endif()
 elseif(BF2_BUILD_MACOS)
     # [CHOSEN, not recovered] The macOS SDK's system ncurses (libncurses.tbd) carries the same
     # entry points; the SDK has no separate libncursesw, so the wide variant is not requested.
@@ -1040,7 +1050,14 @@ if(BF2_BUILD_POSIX)
     # libdice_py.so/.dylib - the embedded CPython 2.3.4 as a shared library, built beside `bf2`.
     # One build description serves both POSIX ports; it selects the platform's pyconfig.h itself.
     set(BF2_DICE_PY_OUTPUT_DIR "${BF2_DEDICATED_OUTPUT_DIR}")
-    if(EXISTS "${BF2_EXTERNAL_ROOT}/python-embedded/linux/CMakeLists.txt")
+    if(ANDROID)
+        set(BF2_ANDROID_PYTHON "" CACHE FILEPATH "ARM64 libdice_py.so from the Android runtime bundle")
+        if(NOT EXISTS "${BF2_ANDROID_PYTHON}")
+            message(FATAL_ERROR "Set BF2_ANDROID_PYTHON to the Android build's arm64 libdice_py.so")
+        endif()
+        add_library(dice_py SHARED IMPORTED GLOBAL)
+        set_property(TARGET dice_py PROPERTY IMPORTED_LOCATION "${BF2_ANDROID_PYTHON}")
+    elseif(EXISTS "${BF2_EXTERNAL_ROOT}/python-embedded/linux/CMakeLists.txt")
         add_subdirectory("${BF2_EXTERNAL_ROOT}/python-embedded/linux" "${CMAKE_BINARY_DIR}/dice_py")
     else()
         message(WARNING
@@ -1144,7 +1161,7 @@ if(BF2_BUILD_LINUX)
     # still runs on an older one; glibc itself stays dynamic (it cannot sensibly be static).
     option(BF2_LINUX_STATIC_RUNTIME
         "Link libstdc++ and libgcc statically into bf2 (portability across distributions)" ON)
-    if(BF2_LINUX_STATIC_RUNTIME)
+    if(BF2_LINUX_STATIC_RUNTIME AND NOT ANDROID)
         target_link_options("${BF2_DEDICATED_TARGET}" PRIVATE -static-libstdc++ -static-libgcc)
     endif()
     target_link_options("${BF2_DEDICATED_TARGET}" PRIVATE

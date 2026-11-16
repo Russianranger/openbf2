@@ -53,6 +53,11 @@ void gsiCancelThread(GSIThreadID id)
 	//should i destroy the attributes here?
 	pthread_attr_destroy(&id.attr);
 
+#if defined(__ANDROID__)
+    /* Bionic has no asynchronous cancellation. The DNS worker owns references
+     * into its caller's handle until it exits. Wait before the caller frees it. */
+    pthread_join(id.thread, NULL);
+#else
 	if (pthread_cancel(id.thread) != PTHREAD_NO_ERROR) {
 		//there was an error - how should we handle these? or should we?
 		gsDebugFormat(GSIDebugCat_Common, GSIDebugType_Misc, GSIDebugLevel_WarmError,
@@ -61,13 +66,16 @@ void gsiCancelThread(GSIThreadID id)
 	//free up memory and set to NULL
 
 	gsifree(&id.thread);
+#endif
 }
 
 // This must be called from INSIDE the thread you wish to exit
 void gsiExitThread(GSIThreadID id)
 {
 	// detach the thread so that it knows to free resources upon exit
+#if !defined(__ANDROID__)
 	pthread_detach(id.thread);
+#endif
 	
 	// exit thread to free up resources
 	pthread_exit(NULL);
@@ -75,6 +83,9 @@ void gsiExitThread(GSIThreadID id)
 
 void gsiCleanupThread(GSIThreadID id)
 {
+	#if defined(__ANDROID__)
+    pthread_join(id.thread, NULL);
+#endif
 	// destroy any leftover attributes associated with the thread
 	pthread_attr_destroy(&id.attr);
 }

@@ -1,0 +1,4 @@
+[submodule "ports/android-engine"]
+	path = ports/android-engine
+	url = https://github.com/Russianranger/openbf2.git
+	branch = android-engine

@@ -9,9 +9,8 @@ successful compilation or a diagnostic executable does not establish a playable 
 
 ## Start here
 
-- [AYN Thor Android port handoff](docs/android-thor/HANDOFF.md): this fork's assessment,
-  milestone ledger, controller/bot design and persistent offline career plan. Planning only;
-  no functional Android port is claimed yet.
+- [OpenBF2 for the AYN Thor](docs/android-thor/ANDROID.md) covers installing and building the ARM64 test APK, starting a local bot match and checking your saved career.
+- [Original Thor port assessment](docs/android-thor/HANDOFF.md) records the design and milestone history.
 - [Getting started](docs/getting-started.md): toolchains, build targets, and runtime setup.
 - [Engine architecture](docs/architecture.md): image boundaries, source layout, and lifecycle.
 - [Development guide](docs/development.md): recovery evidence, code conventions, and validation.

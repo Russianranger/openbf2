@@ -1,5 +1,7 @@
 # OpenBF2 Android / AYN Thor handoff
 
+The current Android implementation and test instructions are in [OpenBF2 for the AYN Thor](ANDROID.md). The October entries below document the original assessment.
+
 Assessment date: 2026-10-21 (America/Chicago).
 Assessed engine baseline: `ccf30993258bfb9638db4aa7115c8a4c1a456e55` on `Russianranger/openbf2/main`.
 

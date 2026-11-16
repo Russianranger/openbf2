@@ -139,7 +139,7 @@ void  gsDebugAssert				(const char *szError,const char *szText, const char *szFi
 #elif defined _LINUX
 	void  _gsDebugAssert			(const char *string)
 	{
-		printf(string);
+		fputs(string, stdout);
 		
 		while(1)
 		{
@@ -170,7 +170,7 @@ void  gsDebugAssert				(const char *szError,const char *szText, const char *szFi
 	void  _gsDebugAssert			(const char *string)
 	{
 
-		printf(string);
+		fputs(string, stdout);
 		while(1);;
 
 	}

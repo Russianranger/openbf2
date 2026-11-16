@@ -1,5 +1,7 @@
 # Android milestone ledger
 
+The current Android implementation and test instructions are in [OpenBF2 for the AYN Thor](ANDROID.md). The October entries below document the original assessment.
+
 Baseline: `ccf30993258bfb9638db4aa7115c8a4c1a456e55`, assessed 2026-10-21.
 This file is the milestone log requested by the owner. It is not a list of completed features.
 
