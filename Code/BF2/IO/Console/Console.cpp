@@ -1278,7 +1278,7 @@ void OldConsole::update(char key, std::string& currentLine, std::vector<std::str
         m_pendingExtendedKey = false;               // cleared even if it was neither
     }
 
-    if (translated == -32)                          // 0xE0 - the prefix; nothing else happens
+    if (static_cast<unsigned char>(translated) == 0xe0)                          // 0xE0 - the prefix; nothing else happens
     {
         m_pendingExtendedKey = true;
         return;

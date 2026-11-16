@@ -1,6 +1,11 @@
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 #include "gsPlatformSocket.h"
+#if defined(__ANDROID__)
+#include <ifaddrs.h>
+#include <stdlib.h>
+#include <net/if.h>
+#endif
 #include "gsPlatformUtil.h"
 #include "gsMemory.h"
 
@@ -564,6 +569,45 @@ HOSTENT * getlocalhost(void)
 #elif defined(_XBOX)
 	return NULL;
 
+
+#elif defined(__ANDROID__)
+    // A local match always uses loopback, even on a phone with mobile/Wi-Fi active.
+    // For LAN, enumerate the active interfaces without consulting host-name services.
+    enum { maxIPs = 5 };
+    static __thread HOSTENT localhost;
+    static __thread char* aliases;
+    static __thread char* ipPtrs[maxIPs + 1];
+    static __thread struct in_addr ips[maxIPs];
+    int count = 0;
+    struct ifaddrs* list = NULL;
+    if (!getenv("BF2_PORT_LOCAL_COOP") && getifaddrs(&list) == 0)
+    {
+        struct ifaddrs* entry;
+        for (entry = list; entry && count < maxIPs; entry = entry->ifa_next)
+        {
+            if (!entry->ifa_addr || entry->ifa_addr->sa_family != AF_INET)
+                continue;
+            if (!(entry->ifa_flags & IFF_UP) || !(entry->ifa_flags & IFF_RUNNING) ||
+                (entry->ifa_flags & IFF_LOOPBACK))
+                continue;
+            ips[count] = ((struct sockaddr_in*)entry->ifa_addr)->sin_addr;
+            ipPtrs[count] = (char*)&ips[count];
+            ++count;
+        }
+        freeifaddrs(list);
+    }
+    if (!count)
+    {
+        ips[0].s_addr = htonl(INADDR_LOOPBACK);
+        ipPtrs[count++] = (char*)&ips[0];
+    }
+    ipPtrs[count] = NULL;
+    localhost.h_name = "localhost";
+    localhost.h_aliases = &aliases;
+    localhost.h_addrtype = AF_INET;
+    localhost.h_length = sizeof(ips[0]);
+    localhost.h_addr_list = ipPtrs;
+    return &localhost;
 
 #else
 	char hostname[256] = "";

@@ -86,6 +86,10 @@
 #include "BF2ClientSeams.h"                 // [FRONTIER] client collaborators without recovered classes
 #include "../LocalProfileManager.h"        // native client startup interface
 #include "../ProfileManager.h"             // renderMenu case 14 clears the pending transition
+#if defined(__ANDROID__) && !DEDICATED
+#include <atomic>
+#include <jni.h>
+#endif
 #include "../../Menu/BF2HudManager.h"       // constructor and established virtual prefix; publication gated
 #include <cstdio>
 #include <cstdlib>
@@ -1587,8 +1591,21 @@ static double s_prevWallClockTime = 0.0;                        // [INFERRED] na
 static float* const s_sleepOverheadTime =                       // [INFERRED] name
     Vars::getFloat("server-sleep-overhead-time", 0.005f);       // default bits 0x3BA3D70A
 
+#if defined(__ANDROID__) && !DEDICATED
+// Read UI-owned game objects only on the engine thread. Android's main thread sees just the flag.
+static std::atomic<bool> s_androidControllerPointer(false);
+extern "C" JNIEXPORT jboolean JNICALL Java_com_mackillergr_bf2_HandheldInput_pointerShown(JNIEnv*, jclass)
+{
+    return s_androidControllerPointer.load(std::memory_order_relaxed);
+}
+#endif
+
 bool BF2Engine::mainLoop()
 {
+#if defined(__ANDROID__) && !DEDICATED
+    s_androidControllerPointer.store(menuLogic || (hudManager && hudManager->isPointerEnabled()),
+                                    std::memory_order_relaxed);
+#endif
     // Runs one frame per call. A pending quit returns false before any frame work.
     if (quitNextFrameFlag)
         return false;

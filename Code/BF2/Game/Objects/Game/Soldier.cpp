@@ -2286,8 +2286,9 @@ bool Soldier::addItem(IObject* item, int index)
 
 // Draws the item in a positive slot, returning whether it accepted activation.
 // A refusal leaves the previous item active; ragdolls always refuse.
-bool Soldier::enableItem(char index)
+bool Soldier::enableItem(char rawIndex)
 {
+    const int index = static_cast<signed char>(rawIndex);
     if (m_ragDoll)                                                  // +0x220
         return false;
     if (index == -1)
@@ -2331,8 +2332,9 @@ bool Soldier::enableItem(char index)
 
 // Stows and detaches the item in a positive slot.
 // Negative indices do nothing; zero and out-of-range indices report an error.
-void Soldier::disableItem(char index)
+void Soldier::disableItem(char rawIndex)
 {
+    const int index = static_cast<signed char>(rawIndex);
     if (index < 0)
         return;                                                      // silent, unlike index 0
 

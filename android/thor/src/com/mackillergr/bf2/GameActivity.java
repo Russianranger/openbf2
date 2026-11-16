@@ -11,6 +11,7 @@ import org.libsdl.app.SDLActivity;
 /** Runs the SDL game in the manifest's dedicated :game process. */
 public final class GameActivity extends SDLActivity {
     private HandheldInput pad;
+    private android.net.wifi.WifiManager.MulticastLock lanLock;
     @Override public boolean dispatchKeyEvent(android.view.KeyEvent e) {
         return pad != null && pad.key(e) || super.dispatchKeyEvent(e);
     }
@@ -20,6 +21,16 @@ public final class GameActivity extends SDLActivity {
     @Override protected void onPause() {
         if (pad != null) pad.reset();
         super.onPause();
+    }
+    @Override public void onWindowFocusChanged(boolean focused) {
+        if (!focused && pad != null) pad.reset();
+        super.onWindowFocusChanged(focused);
+    }
+    @Override protected void onDestroy() {
+        try {
+            if (pad != null) { pad.close(); pad = null; }
+            super.onDestroy();
+        } finally { LanWifi.release(lanLock); GameSession.release(); }
     }
     private static final String TAG = "BF2Stage3";
 
@@ -55,7 +66,7 @@ public final class GameActivity extends SDLActivity {
 
     @Override protected String[] getArguments() {
         String[] args = getIntent().getStringArrayExtra("args");
-        return args == null ? new String[0] : args.clone();
+        return args == null ? new String[0] : GameKey.append(this, args);
     }
 
     public void exportGameLog() {
@@ -76,6 +87,9 @@ public final class GameActivity extends SDLActivity {
             finish();
             return;
         }
+        GameSession.hold(this);
+        java.util.List<String> options = java.util.Arrays.asList(args);
+        if (options.contains("--hosted") && !options.contains("--coop")) lanLock = LanWifi.acquire(this);
         // Only log selected mode; path/player may be private, CD key must never be logged.
         String mode = "UNKNOWN";
         for (String a : args) {
@@ -87,8 +101,7 @@ public final class GameActivity extends SDLActivity {
         super.onCreate(state);
         // Feed touchscreen taps to SDL3 as PC mouse moves/clicks.
         // menuShown() switches automatically between Flash-menu pointing and FPS controls.
-        if (!mBrokenLibraries) pad = new HandheldInput(getIntent().getIntExtra("gameWidth", 1280),
-                getIntent().getIntExtra("gameHeight", 720));
+        if (!mBrokenLibraries) pad = new HandheldInput(this);
         if (!mBrokenLibraries && getIntent().getBooleanExtra("touch", true)) {
             TouchOverlay overlay = new TouchOverlay(this);
             int gameWidth = getIntent().getIntExtra("gameWidth", 1280);

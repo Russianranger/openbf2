@@ -824,7 +824,11 @@ static std::string androidCommandLine(int argc, char** argv)
         root = slash == std::string::npos ? std::string() : root.substr(0, slash);
     }
     if (chdir(root.c_str()) != 0)
+    {
         std::fprintf(stderr, "chdir %s failed\n", root.c_str());
+        return std::string();
+    }
+    setenv("BF2_ANDROID_GAME_ROOT", root.c_str(), 1);
     std::string line = "+modPath mods/bf2 +fullscreen 0 +restart 1 +multi 1 +szx " + width + " +szy " + height;
     if (menu)
         return line;

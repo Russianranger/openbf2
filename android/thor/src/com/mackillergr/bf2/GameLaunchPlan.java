@@ -25,11 +25,16 @@ public final class GameLaunchPlan {
 
     public static String[] forCoop(String modDir, String libDir, int width, int height,
                                    String player, String driver, String level) {
+        return forHost(modDir, libDir, width, height, player, driver, level, true);
+    }
+
+    public static String[] forHost(String modDir, String libDir, int width, int height,
+                                   String player, String driver, String level, boolean coop) {
         if (level == null || !level.matches("[A-Za-z0-9_-]+"))
-            throw new IllegalArgumentException("Invalid co-op map name");
+            throw new IllegalArgumentException("Invalid map name");
         List<String> args = common(modDir, libDir, width, height, player, driver);
         args.add("--hosted");
-        args.add("--coop");
+        if (coop) args.add("--coop");
         add(args, "--level", level);
         return args.toArray(new String[0]);
     }

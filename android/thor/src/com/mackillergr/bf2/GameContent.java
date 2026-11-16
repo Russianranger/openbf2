@@ -18,8 +18,11 @@ final class GameContent {
     }
 
     static boolean hasCoop(File level) {
+        return hasLayout(level, "gpm_coop");
+    }
+    static boolean hasLayout(File level, String mode) {
         if (!level.getName().matches("[A-Za-z0-9_-]+")) return false;
-        String path = "GameModes/gpm_coop/16/GamePlayObjects.con";
+        String path = "GameModes/" + mode + "/16/GamePlayObjects.con";
         File loose = level;
         for (String segment : path.split("/")) loose = child(loose, segment);
         if (loose.isFile()) return true;

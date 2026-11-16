@@ -60,6 +60,7 @@ public final class LanBrowserActivity extends Activity {
         found.removeAllViews(); busy(true);
         status.setText(broadcast ? "Searching LAN…" : "Query: " + ip + ":" + queryPort);
         worker.execute(() -> {
+            android.net.wifi.WifiManager.MulticastLock lock = broadcast ? LanWifi.acquire(this) : null;
             try {
                 List<LanQuery.Result> list = broadcast ? LanDiscovery.scan(queryPort, 2200) :
                         Collections.singletonList(LanQuery.query(ip, queryPort, 2200));
@@ -89,7 +90,7 @@ public final class LanBrowserActivity extends Activity {
                     status.setText("BF2 query failed: " + e.getClass().getSimpleName() +
                             " — " + e.getMessage());
                 });
-            }
+            } finally { LanWifi.release(lock); }
         });
     }
     @Override public void onDestroy() { worker.shutdownNow(); super.onDestroy(); }

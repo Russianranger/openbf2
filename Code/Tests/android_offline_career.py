@@ -58,6 +58,9 @@ import bf2_offline_career as career
 career.CAREER_HOME = store
 save(store + '/active', 'first')
 career.init()
+registered = open(store + '/registered', 'r')
+assert registered.read().strip() == 'first'
+registered.close()
 for status in (3, 1, 1, 4, 1, 2, 2):
     host.callback(status)
 assert read_receipts() == ['1 -3 1 4']

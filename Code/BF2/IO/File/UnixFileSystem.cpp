@@ -9,6 +9,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
+#ifdef __ANDROID__
+#include <strings.h>
+#endif
 #include <limits.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -114,7 +117,29 @@ IBase* UnixFileSystem::create(unsigned int iid, IBase* outer)
 // Normalizes a path in place by folding case and converting backslashes to forward slashes.
 void UnixFileSystem::fixUnixPath(std::string& path)
 {
-    for (std::string::size_type i = 0; i < path.size(); ++i)
+    std::string::size_type first = 0;
+#ifdef __ANDROID__
+    // Android supplies physical paths such as /storage/emulated/0/Android/data/... .
+    // Fold BF2 content names below those roots while preserving the physical mount path.
+    if (!path.empty() && path[0] == '/')
+    {
+        const char* roots[] = {std::getenv("BF2_ANDROID_GAME_ROOT"), std::getenv("HOME")};
+        for (const char* root : roots)
+        {
+            if (!root || root[0] != '/')
+                continue;
+            const std::size_t length = std::strlen(root);
+            if (length <= path.size() && strncasecmp(path.data(), root, length) == 0 &&
+                (length == path.size() || path[length] == '/' || path[length] == '\\'))
+            {
+                path.replace(0, length, root);
+                first = length;
+                break;
+            }
+        }
+    }
+#endif
+    for (std::string::size_type i = first; i < path.size(); ++i)
     {
         if (path[i] == '\\')
             path[i] = '/';

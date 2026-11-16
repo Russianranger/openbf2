@@ -88,6 +88,16 @@ def init():
     _session = _active_session()
     if _session:
         host.registerGameStatusHandler(_status)
+        # A fresh launch token lets the UI confirm the real game has loaded the hook.
+        path = CAREER_HOME + '/registered'
+        writer = open(path + '.tmp', 'w')
+        try:
+            writer.write(_session + '\n')
+            writer.flush()
+            posix.fsync(writer.fileno())
+        finally:
+            writer.close()
+        posix.rename(path + '.tmp', path)
 
 
 def update():

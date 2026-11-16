@@ -35,17 +35,27 @@ final class GameDirectoryPicker {
     };
     private final Activity activity;
     private final Listener listener;
-    private boolean importing;
+    private static final java.util.concurrent.atomic.AtomicBoolean IMPORTING =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private final byte[] buffer = new byte[128 * 1024];
+    private File stagedFile;
+    private long lastProgress;
+
 
     GameDirectoryPicker(Activity activity, Listener listener) {
         this.activity = activity;
         this.listener = listener;
     }
 
-    boolean isImporting() { return importing; }
+    boolean isImporting() { return IMPORTING.get(); }
 
     void pick() {
-        if (importing) {
+        try {
+            if (GameSession.isActive(activity)) {
+                listener.onStatus("Close the current game before importing data."); return;
+            }
+        } catch (IOException e) { listener.onStatus("Unable to check game session: " + e.getMessage()); return; }
+        if (IMPORTING.get()) {
             listener.onStatus("A game data import is already in progress.");
             return;
         }
@@ -125,11 +135,11 @@ final class GameDirectoryPicker {
     }
 
     private void importInstallation(Uri tree) {
-        if (importing) return;
+        if (!IMPORTING.compareAndSet(false, true)) return;
         File files = activity.getExternalFilesDir(null);
         final File gameRoot = new File(files != null ? files : activity.getFilesDir(), "Game Files");
         final File dst = new File(gameRoot, "mods/bf2");
-        importing = true;
+        stagedFile = new File(gameRoot.getParentFile(), "openbf2-import.partial");
         listener.onStatus("Reading Battlefield 2 installation…");
         new Thread(() -> {
             try {
@@ -151,11 +161,11 @@ final class GameDirectoryPicker {
                 SharedPreferences state = activity.getSharedPreferences("import", Activity.MODE_PRIVATE);
                 boolean reuse = tree.toString().equals(state.getString("tree", ""));
                 state.edit().putBoolean("incomplete", true).putString("tree", tree.toString()).commit();
-                int total = copy(tree, mod, dst, reuse);
+                int total = copy(tree, mod, dst, gameRoot, reuse);
                 for (Node n : children(tree, root.id)) {
                     if (n.directory && (n.name.equalsIgnoreCase("python") || n.name.equalsIgnoreCase("admin")
                             || n.name.equalsIgnoreCase("profiles"))) {
-                        total += copy(tree, n, new File(gameRoot, n.name.toLowerCase(java.util.Locale.ROOT)), reuse);
+                        total += copy(tree, n, new File(gameRoot, n.name.toLowerCase(java.util.Locale.ROOT)), gameRoot, reuse);
                     } else if (!n.directory && n.name.equalsIgnoreCase("pylib-2.3.4.zip")) {
                         copyFile(tree, n, new File(gameRoot, "pylib-2.3.4.zip"), reuse);
                     }
@@ -163,22 +173,23 @@ final class GameDirectoryPicker {
                 for (String name : REQUIRED)
                     if (!GameContent.child(dst,name).isFile())
                         throw new IOException("Missing " + name + " in the selected installation");
+                if (stagedFile.exists()) stagedFile.delete();
                 state.edit().putBoolean("incomplete", false).commit();
                 final int completed = total;
                 activity.runOnUiThread(() -> {
-                    importing = false;
+                    IMPORTING.set(false);
                     listener.onImported(dst.getAbsolutePath());
                     listener.onStatus("Imported " + completed + " game files.");
                 });
             } catch (Exception e) {
                 activity.runOnUiThread(() -> {
-                    importing = false;
+                    IMPORTING.set(false);
                     listener.onStatus("Import failed: " + e.getMessage());
                 });
             }
         }, "openbf2-import").start();
     }
-    private int copy(Uri tree, Node src, File root, boolean reuse) throws IOException {
+    private int copy(Uri tree, Node src, File root, File gameRoot, boolean reuse) throws IOException {
         if (!root.isDirectory() && !root.mkdirs()) throw new IOException("Cannot create the game data folder");
         ArrayDeque<Job> queue = new ArrayDeque<>();
         Set<String> seen = new HashSet<>();
@@ -195,7 +206,8 @@ final class GameDirectoryPicker {
                 if (file.name.isEmpty() || ".".equals(file.name) || "..".equals(file.name) ||
                         file.name.contains("/") || file.name.contains("\\") || file.name.indexOf('\0') >= 0)
                     throw new IOException("Invalid file name");
-                File output = new File(current.target, file.name);
+                String name = OfflineCareer.importName(gameRoot, current.target, file.name);
+                File output = new File(current.target, name);
                 if (!output.getCanonicalPath().startsWith(allowedRoot))
                     throw new IOException("Invalid file path");
                 if (file.directory) {
@@ -204,7 +216,9 @@ final class GameDirectoryPicker {
                 }
                 if (++count > 40000) throw new IOException("Too many files in one game directory");
                 
-                if (count % 5 == 1 || file.size > 25000000) {
+                long now = android.os.SystemClock.elapsedRealtime();
+                if (now - lastProgress >= 500) {
+                    lastProgress = now;
                     final int c = count;
                     final String n = file.name;
                     activity.runOnUiThread(() -> listener.onStatus("Importing #" + c + ": " + n));
@@ -217,13 +231,12 @@ final class GameDirectoryPicker {
     private void copyFile(Uri tree, Node file, File output, boolean reuse) throws IOException {
         if (reuse && file.modified > 0 && output.isFile() && output.length() == file.size
                 && output.lastModified() == file.modified) return;
-        File part = File.createTempFile("bf2-import-", ".partial", output.getParentFile());
+        File part = stagedFile;
         try {
             Uri doc = DocumentsContract.buildDocumentUriUsingTree(tree, file.id);
             try (InputStream in = activity.getContentResolver().openInputStream(doc);
                  FileOutputStream out = new FileOutputStream(part)) {
                 if (in == null) throw new IOException("Unable to open " + file.name);
-                byte[] buffer = new byte[131072];
                 for (int n; (n = in.read(buffer)) >= 0;) out.write(buffer, 0, n);
             }
             if (file.size >= 0 && part.length() != file.size) throw new IOException("Incomplete copy: " + file.name);

@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.UUID;
 
 /** Local, device-wide soldier career. Only the app's offline listen server produces receipts. */
@@ -24,6 +25,38 @@ public final class OfflineCareer {
         "Master Gunnery Sergeant"};
 
     private OfflineCareer() {}
+
+    /** Restore stock script names during SAF import onto a case-sensitive filesystem. */
+    public static String importName(File gameRoot, File directory, String source) {
+        String prefix = gameRoot.getAbsolutePath() + File.separator;
+        String parent = directory.getAbsolutePath();
+        if (!parent.startsWith(prefix)) return source;
+        String path = parent.substring(prefix.length()).toLowerCase(Locale.ROOT);
+        String options;
+        switch (path) {
+            case "mods/bf2": options = "python"; break;
+            case "python": options = "bf2"; break;
+            case "python/bf2":
+                options = "__init__.py Timer.py TriggerManager.py ObjectManager.py PlayerManager.py GameLogic.py stats";
+                break;
+            case "python/bf2/stats":
+                options = "__init__.py stats.py endofround.py unlocks.py rank.py constants.py"
+                        + " fragalyzer_log.py medals.py snapshot.py";
+                break;
+            case "mods/bf2/python": options = "game"; break;
+            case "mods/bf2/python/game": options = "__init__.py scoringCommon.py gamemodes"; break;
+            case "mods/bf2/python/game/gamemodes": options = "__init__.py gpm_coop.py gpm_cq.py"; break;
+            default: options = ""; break;
+        }
+        for (String spelling : options.split(" "))
+            if (spelling.equalsIgnoreCase(source)) return spelling;
+        // The native Unix filesystem folds its BF2 asset paths. The embedded interpreter
+        // resolves module filenames itself and must retain case, including custom modules.
+        if ((path.equals("mods/bf2") || path.startsWith("mods/bf2/"))
+                && !path.equals("mods/bf2/python") && !path.startsWith("mods/bf2/python/"))
+            return source.toLowerCase(Locale.ROOT);
+        return source;
+    }
 
     private static File home(Context context) {
         return new File(context.getFilesDir(), "offline-career");
@@ -87,6 +120,16 @@ public final class OfflineCareer {
         if (active.exists() && !active.delete()) throw new IOException("Could not close offline career");
     }
 
+    private static String readSession(File file) throws IOException {
+        if (!file.isFile()) return "";
+        if (file.length() > 80) throw new IOException("Invalid career session file");
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new FileInputStream(file), StandardCharsets.US_ASCII))) {
+            String line = reader.readLine();
+            return line == null ? "" : line;
+        }
+    }
+
     private static void importReceipt(SQLiteDatabase db, File receipt) throws IOException {
         if (receipt.length() > 128) throw new IOException("Oversized offline round receipt");
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
@@ -134,9 +177,17 @@ public final class OfflineCareer {
                     while (rank + 1 < POINTS.length && score >= POINTS[rank + 1]) rank++;
                     String next = rank + 1 < POINTS.length ? "\nNext: " + RANKS[rank + 1]
                             + " at " + POINTS[rank + 1] + " points" : "";
+                    String active = readSession(new File(store, "active"));
+                    String registration = "";
+                    if (!active.isEmpty()) {
+                        registration = active.equals(readSession(new File(store, "registered")))
+                                ? "\nThe offline server loaded career scoring for the last launch."
+                                : "\nWaiting for the offline server to load career scoring.";
+                    }
                     return RANKS[rank] + " · " + score + " career points\n" + c.getLong(0)
                             + " completed rounds · " + c.getLong(2) + " kills · " + c.getLong(3)
-                            + " deaths" + next + (invalid ? "\nA round receipt could not be read." : "");
+                            + " deaths" + next + registration
+                            + (invalid ? "\nA round receipt could not be read." : "");
                 }
             }
         } catch (IOException | RuntimeException ex) {

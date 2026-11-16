@@ -23,6 +23,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 /**
  * Exports engine logs to a document chosen through the Android system picker.
@@ -62,7 +63,7 @@ public final class BF2LogExporter {
         activity.runOnUiThread(() -> Toast.makeText(activity, text, Toast.LENGTH_LONG).show());
     }
 
-    private static void writeFile(BufferedWriter writer, File file) throws Exception {
+    private static void writeFile(BufferedWriter writer, File file, Pattern key) throws Exception {
         writer.write("\n===== " + file.getName() + " (" + file.length() + " bytes) =====\n");
         long start = Math.max(0, file.length() - MAX_LOG_CHARS);
         try (FileInputStream input = new FileInputStream(file)) {
@@ -77,16 +78,18 @@ public final class BF2LogExporter {
                 char[] chunk = new char[8192];
                 int count;
                 int remaining = MAX_LOG_CHARS;
+                StringBuilder tail = new StringBuilder();
                 while (remaining > 0 && (count = reader.read(chunk, 0, Math.min(chunk.length, remaining))) > 0) {
-                    writer.write(chunk, 0, count);
+                    tail.append(chunk, 0, count);
                     remaining -= count;
                 }
+                writer.write(scrub(tail, key));
             }
         }
         writer.write("\n");
     }
 
-    private static void writeLogcat(BufferedWriter out) {
+    private static void writeLogcat(BufferedWriter out, Pattern key) {
         java.lang.Process proc = null;
         try {
             proc = new ProcessBuilder("logcat", "-d", "-v", "threadtime",
@@ -98,7 +101,7 @@ public final class BF2LogExporter {
                 String line;
                 int count = 0;
                 while ((line = reader.readLine()) != null && count++ < 600) {
-                    out.write(line);
+                    out.write(scrub(line, key));
                     out.newLine();
                 }
             }
@@ -111,8 +114,16 @@ public final class BF2LogExporter {
         }
     }
 
+    private static final Pattern COMMAND_KEY = Pattern.compile("(?i)(?:--cdkey|\\+cdkey|BF2_PORT_CDKEY)[=\\s]+[A-Za-z0-9-]+");
+    private static String scrub(CharSequence text, Pattern key) {
+        String value = COMMAND_KEY.matcher(text).replaceAll("[product key omitted]");
+        return key == null ? value : key.matcher(value).replaceAll("[product key omitted]");
+    }
+
     private static void save(Activity activity, Uri target) {
         try (OutputStream stream = activity.getContentResolver().openOutputStream(target, "w")) {
+            String credential = GameKey.read(activity);
+            Pattern key = credential.isEmpty() ? null : Pattern.compile(Pattern.quote(credential), Pattern.CASE_INSENSITIVE);
             if (stream == null) throw new IllegalStateException("Unable to open the destination");
             try (BufferedWriter writer = new BufferedWriter(
                     new OutputStreamWriter(stream, StandardCharsets.UTF_8))) {
@@ -147,11 +158,11 @@ public final class BF2LogExporter {
                 int found = 0;
                 for (File f : logs) {
                     if (found++ >= MAX_FILES) break;
-                    try { writeFile(writer, f); }
+                    try { writeFile(writer, f, key); }
                     catch (Exception e) { writer.write("Unreadable " + f.getName() + ": " + e.getMessage() + "\n"); }
                 }
                 if (logs.isEmpty()) writer.write("\nNo engine log files were found in the app's files folder.\n");
-                writeLogcat(writer);
+                writeLogcat(writer, key);
                 writer.flush();
             }
             message(activity, "Game logs exported.");
