@@ -10,10 +10,16 @@
 
 #include "base/tu_config.h"
 #include <math.h>
+#ifdef __cplusplus
+#include <cmath>
+#endif
 #include <float.h>
 
 // OSX doesn't have single precision math functions defined in math.h
-#ifdef __MACH__
+// [BUILD-FIX SwiffPlayer: every supported macOS SDK declares the float functions, and these macros
+// rename unrelated identifiers (renddx9abi::logf). The Windows build never took this branch, so
+// it stays off on macOS too and the menu player uses the same float math everywhere.]
+#if defined(__MACH__) && 0
     #define sinf sin
     #define cosf cos
     #define tanf tan
@@ -30,11 +36,14 @@
 
 
 // isfinite() comes with C99; fake version here in case compiler lacks it.
-#ifndef isfinite
+// [BUILD-FIX SwiffPlayer: include C++ math declarations before the legacy fallback and
+// use the toolchain's isfinite on MSVC 2013+ or C++11+, where it need not be a macro.]
+#if !defined(isfinite) && !(defined(_MSC_VER) && _MSC_VER >= 1800) \
+    && !(defined(__cplusplus) && __cplusplus >= 201103L)
 #define isfinite(x) (sizeof(x) == sizeof(float) ? isfinitef(x) : isfinited(x))
 #define isfinitef(x) ((x) >= -FLT_MAX && (x) <= FLT_MAX)	// NAN should fail this, yes?
 #define isfinited(x) ((x) >= -DBL_MAX && (x) <= DBL_MAX)
-#endif // not isfinite
+#endif // legacy toolchain without isfinite
 
 
 #endif // TU_MATH_H

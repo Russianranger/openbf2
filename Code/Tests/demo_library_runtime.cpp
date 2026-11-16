@@ -24,6 +24,10 @@ static unsigned checks, failures;
 static void check(bool value,const char* label)
 { ++checks; if(!value){++failures;std::printf("FAIL %s\n",label);} }
 
+// [TEMP] DemoLibrary's HTTPRequest base (4C2510 -> 59C390) starts the GameSpy HTTP SDK; this
+// fixture never starts a transfer, so only the startup/cleanup pair is supplied.
+extern "C" void ghttpStartup() {}
+extern "C" void ghttpCleanup() {}
 namespace dice { namespace hfe {
 // [TEMP] Globals this isolated executable does not link from their owning units.
 ClassManager* classManager=nullptr;
@@ -85,8 +89,8 @@ struct ProfileOwner : ILocalProfileManager {
     bool createProfile(const std::string&,const std::string&) override { std::abort(); }
     bool deleteProfile(int) override { std::abort(); }
     bool createOnlineAccount(const std::string&,const std::string&,const std::string&,const std::string&) override { std::abort(); }
-    void frontierPrimary30() override { std::abort(); }
-    void frontierPrimary34() override { std::abort(); }
+    bool hasCurrentProfile(int) override { std::abort(); }
+    bool slot34(int, int) override { std::abort(); }
     bool hasProfile(const std::string&) override { std::abort(); }
     bool loadCurrentProfile() override { std::abort(); }
     bool saveCurrentProfile() override { std::abort(); }
@@ -124,6 +128,8 @@ struct ProfileOwner : ILocalProfileManager {
     bool quickLogin(const std::string&,const std::string&) override { std::abort(); }
     bool saveGlobalSettings() override { std::abort(); }
     bool validateProfileFiles(const std::string&) override { std::abort(); }
+    int getLoginProfileIndex() override { std::abort(); }
+    std::string getLoginPassword() override { std::abort(); }
 };
 
 struct Registry : ClassManager {

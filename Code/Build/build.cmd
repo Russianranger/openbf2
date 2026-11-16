@@ -106,12 +106,21 @@ for /r "%ROOT%" %%F in (*.cpp) do (
         ) else (
             set /a OK+=1
             rem The repository contains source for more than one shipped image.  Compile every TU
-            rem for coverage, but never link the seven AIDLL-only units into bf2_w32ded.exe.
+            rem for coverage, but never link AIDLL-only units into bf2_w32ded.exe.
             set "ENGINE_OBJECT=1"
+            rem AIDLL owns every TU under AI\AIDLL except the shared singleton bridge.
+            echo %%F | find /i "\AI\AIDLL\" >nul
+            if not errorlevel 1 set "ENGINE_OBJECT=0"
+            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\CommonSingletonServer.cpp" set "ENGINE_OBJECT=1"
+            if /i "%%~fF"=="%ROOT%\Math\DoubleVec3.cpp" set "ENGINE_OBJECT=0"
             rem Code\BF2\VoipServer is a THIRD server-side image (BF2VoipServer_w32ded.dll - see
             rem bf2_voipserver in CMakeLists.txt). No unit in it is an engine member, so the whole
             rem directory is excluded here; CMakeLists.txt mirrors this with bf2_voipserver_only_sources.
             echo %%F | find /i "\BF2\VoipServer\" >nul
+            if not errorlevel 1 set "ENGINE_OBJECT=0"
+            rem Code\BF2\Memory is the recovered Memory.dll, its own image (Code\Build\memory.cmd); the
+            rem engine keeps its own memory:: stubs. CMakeLists.txt skips the directory the same way.
+            echo %%F | find /i "\BF2\Memory\" >nul
             if not errorlevel 1 set "ENGINE_OBJECT=0"
             if /i "%%~fF"=="%ROOT%\Core\DllModule.cpp" set "ENGINE_OBJECT=0"
             rem The side-DLL image owns its globals translation unit.
@@ -119,6 +128,8 @@ for /r "%ROOT%" %%F in (*.cpp) do (
             rem the engine's definition site for most of them and the two would collide here.
             if /i "%%~fF"=="%ROOT%\Core\DllGlobals.cpp" set "ENGINE_OBJECT=0"
             if /i "%%~fF"=="%ROOT%\Math\Mat4Inverse.cpp" set "ENGINE_OBJECT=0"
+            rem BF2.exe client tutorial TU; excluded from the dedicated engine image.
+            if /i "%%~fF"=="%ROOT%\Game\GameLogic\PlayerVOHelp.cpp" set "ENGINE_OBJECT=0"
             if /i "%%~fF"=="%ROOT%\Menu\BetweenRoundsLogic.cpp" set "ENGINE_OBJECT=0"
             if /i "%%~fF"=="%ROOT%\Menu\BF2HudManager.cpp" set "ENGINE_OBJECT=0"
             if /i "%%~fF"=="%ROOT%\Menu\BF2HudManagerConfiguration.cpp" set "ENGINE_OBJECT=0"
@@ -176,93 +187,13 @@ for /r "%ROOT%" %%F in (*.cpp) do (
             if /i "%%~fF"=="%ROOT%\IO\Input\KeyboardDevice.cpp" set "ENGINE_OBJECT=0"
             if /i "%%~fF"=="%ROOT%\IO\Input\MouseDevice.cpp" set "ENGINE_OBJECT=0"
             if /i "%%~fF"=="%ROOT%\IO\Input\GameControllerDevice.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\IO\Input\FalconDevice.cpp" set "ENGINE_OBJECT=0"
             if /i "%%~fF"=="%ROOT%\IO\Input\DX8InputDeviceManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBot\BotMain.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBot\BotNavigation.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBot\BotSquad.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBot\SensingAgent.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBot\CommunicationAgent.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBot\BotSenses.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIPlanInterpreter\BAPContext.cpp" set "ENGINE_OBJECT=0"
             rem 2026-09-08, chunk 02: both managers are libaidll-only (CLASS_CENSUS_LIBAIDLL.tsv rows
             rem WeaponInfoManager 0x36CF40 and the fully inlined InformationManager); neither has a
             rem counterpart in bf2. Core\SpHandlePool.h is a header-only template and needs no row.
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\InformationManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\Information.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\WeaponInfo.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\IPIArmament.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\IPIArmamentReal.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\IPICover.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\IPIMobile.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\IPIMobileReal.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\IPIMobileKnown.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\IPIUnit.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\InformationReal.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\WeaponInfoReal.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\IPIPhysicalReal.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIUtils\VehicleOccupancy.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\BFInformationEnvironment.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\AIInformationGrid.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIUtils\DebugRendering\AIRenderUtil.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\WeaponInfoManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\BFInformationCourier.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIKnowledge\InformationFactory.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIStrategicMap\BFStrategicEnvironment.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIStrategicMap\BotSpawner.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\DrawPrimitives\DPManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\AICollisionHandler.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\AIEventCourier.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\AIMineManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\AIPlayerCourier.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\BFPathfindingCourier.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIPathFinding\Material\MaterialManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIPathFinding\NavMesh\MapProperties.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIPathFinding\NavMesh\QuadTreeManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIPathFinding\NavMesh\QuadTree.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIPathFinding\NavMesh\QuadTreeNode.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIPathFinding\Cluster\ClusterGraph.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIPathFinding\Cluster\ClusterNodeManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIPathFinding\NavMesh\QTSearchNodeManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIStrategicMap\AerialHeightMap.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIPlanInterpreter\BAPEntries.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBot\SensingAgentPatterns.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBot\SquadManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBot\SquadCoordinator.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBot\SquadFormation.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBot\SquadMember.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBotBehaviour\CustomCurve.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBot\BotMemory.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBot\BotSubObjects.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBotBehaviour\UrgencyMerger.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\AIConsole.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIBotBehaviour\UrgeCurve.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIStrategicEntity\CoverPosition\CPNodeManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIStrategicEntity\CoverPosition\CoverPositionManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIStrategicEntity\AIStrategicObjectManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIStrategicEntity\AILandingZoneManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIStrategicEntity\AIStrategicObject.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIStrategicEntity\AIStrategicArea.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIStrategicEntity\SAWayPoint.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\AIStrategic\SAI.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\BotBehaviourManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\CommunicationHub.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\StrategyManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\AIPathfinding.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\IAIPathfinding.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\UserOrderManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\AIMain.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\AIModule.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\AIRandom.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\AILODManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\IBotManager.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\AISettings.cpp" set "ENGINE_OBJECT=0"
             rem 2026-09-08: AISingletonServer exists ONLY in libaidll.so (0x2EAC60); the engine has
             rem BFSingletonServer instead. CommonSingletonServer.cpp keeps the half that is in BOTH
             rem images and stays in this link. See that file's header for the census rows.
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\AISingletonServer.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\BF2AI.cpp" set "ENGINE_OBJECT=0"
-            if /i "%%~fF"=="%ROOT%\AI\AIDLL\AI\Main\BotManager.cpp" set "ENGINE_OBJECT=0"
             if /i "%%~fF"=="%ROOT%\Game\Main\BF2Window.cpp" set "ENGINE_OBJECT=0"
             if /i "%%~fF"=="%ROOT%\Game\Main\BF2FrameInterpolator.cpp" set "ENGINE_OBJECT=0"
             if /i "%%~fF"=="%ROOT%\Game\Main\BF2Render.cpp" set "ENGINE_OBJECT=0"
@@ -273,6 +204,14 @@ for /r "%ROOT%" %%F in (*.cpp) do (
             if /i "%%~fF"=="%ROOT%\Menu\MenuTeamManagerData.cpp" set "ENGINE_OBJECT=0"
             if /i "%%~fF"=="%ROOT%\Menu\MenuTeamManagerConsole.cpp" set "ENGINE_OBJECT=0"
             if /i "%%~fF"=="%ROOT%\Menu\SwiffHostConsole.cpp" set "ENGINE_OBJECT=0"
+            rem 2026-11-13: the PunkBuster client glue exists only in BF2.exe (0x435900..0x436434); the
+            rem ELF dedicated server has only the server half (PbServer.cpp). Every caller is #if !DEDICATED.
+            if /i "%%~fF"=="%ROOT%\Game\PunkBuster\PbClient.cpp" set "ENGINE_OBJECT=0"
+            rem 2026-11-13: the voice client (Game\VoipClient: GameSpy Voice 2 capture/playback and the
+            rem waveIn mixer) exists only in BF2.exe; CMake lists the directory in bf2_client_only_sources.
+            rem Linking it here left 30 of the 86 unresolved externals (gv*, GVI*, mixer*).
+            echo %%F | find /i "\Game\VoipClient\" >nul
+            if not errorlevel 1 set "ENGINE_OBJECT=0"
             if "!ENGINE_OBJECT!"=="1" echo "%OUT%\!OBJN!_%%~nF.obj">>"%ENGINE_RSP%"
         )
     )
@@ -383,7 +322,13 @@ rem /NODEFAULTLIB:python23.lib - PC\pyconfig.h emits `#pragma comment(lib,"pytho
 rem every TU that does not define Py_BUILD_CORE, so once dice_py became a real DLL (2026-08-18)
 rem THIS DIAGNOSTIC LINK started dying on LNK1104 before it counted a single gap. The report is a
 rem measurement tool - it has to survive.
-link /nologo /NODEFAULTLIB:python23.lib /out:"%OUT%\bf2.exe" /subsystem:console @"%ENGINE_RSP%" Ws2_32.lib user32.lib > "%OUT%\link.log" 2>&1
+rem
+rem 2026-11-13: advapi32, shell32 and dbghelp join Ws2_32/user32, as on CMake's bf2_w32ded link
+rem (SHGetFolderPathW, SHFileOperationW, ShellExecuteExA, MiniDumpWriteDump). What remains at batch 20
+rem is not an engine gap: the CPython imports above (deliberately unlinked) and CBF2VoipServer's six
+rem members, which bf2_w32ded.exe imports from the BF2VoipServer_w32ded.dll side image (CMake links
+rem bf2_voipserver's import library; this script does not build that image).
+link /nologo /NODEFAULTLIB:python23.lib /out:"%OUT%\bf2.exe" /subsystem:console @"%ENGINE_RSP%" Ws2_32.lib user32.lib advapi32.lib shell32.lib dbghelp.lib > "%OUT%\link.log" 2>&1
 find /c "unresolved external symbol" < "%OUT%\link.log" > "%OUT%\count.txt"
 set /p NRAW=<"%OUT%\count.txt"
 set "NFINAL=0"
@@ -406,7 +351,7 @@ rem therefore stay visible. A response file avoids cmd.exe's command-line length
         if errorlevel 1 echo "%%~fF"
     )
 )
-link /nologo /NODEFAULTLIB:python23.lib /out:"%OUT%\bf2_factory_free.exe" /subsystem:console @"%OUT%\factory_free.rsp" Ws2_32.lib user32.lib > "%OUT%\link_factory_free.log" 2>&1
+link /nologo /NODEFAULTLIB:python23.lib /out:"%OUT%\bf2_factory_free.exe" /subsystem:console @"%OUT%\factory_free.rsp" Ws2_32.lib user32.lib advapi32.lib shell32.lib dbghelp.lib > "%OUT%\link_factory_free.log" 2>&1
 find /c "unresolved external symbol" < "%OUT%\link_factory_free.log" > "%OUT%\count_factory_free.txt"
 set /p NFRAW=<"%OUT%\count_factory_free.txt"
 set "NFFINAL=0"

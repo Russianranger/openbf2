@@ -8,7 +8,8 @@
 #include "IEventListener.h"
 #include <string>
 #include <vector>
-#if !DEDICATED
+// The interface is declared in every image (the dedicated AI reaches it through BFGame's menu
+// arm, which no dedicated module can trigger); the implementation is client-only.
 namespace dice { namespace hfe {
 
 struct LocalProfile {
@@ -41,11 +42,12 @@ public:
     virtual bool deleteProfile(int profileIndex) = 0;
     virtual bool createOnlineAccount(const std::string& nick, const std::string& email,
                                      const std::string& password, const std::string& country) = 0; // PE+2C 4A7600
-    // [CHOSEN, not recovered] [RETIRE-WHEN: local-profile-approved-opaque-slots]
-    // Abort-only placeholders preserve virtual positions. Their void() signature is not the retail ABI;
-    // original parameter types are unknown. These methods must never return.
-    virtual void frontierPrimary30() = 0; // PE+30
-    virtual void frontierPrimary34() = 0; // PE+34
+    // PE+30 4A7690: `cmp [ecx+0C],0; setne al; ret 4` - whether a profile is current; the one stack
+    // argument is ignored (its type is unknown, a dword). Name [INFERRED].
+    virtual bool hasCurrentProfile(int ignored) = 0;
+    // PE+34 4553F0: the image's shared `mov al,1; ret 8` - true, both dword arguments ignored. Name
+    // [INFERRED]; no caller in the client image.
+    virtual bool slot34(int ignored, int ignored2) = 0;
     virtual bool hasProfile(const std::string& profileName) = 0;
     virtual bool loadCurrentProfile() = 0; // PE+3C 4AB1D0
     virtual bool saveCurrentProfile() = 0;
@@ -83,12 +85,18 @@ public:
     virtual bool quickLogin(const std::string& name, const std::string& password) = 0; // PE+C0 4AAD00
     virtual bool saveGlobalSettings() = 0; // PE+C4 4A9440
     virtual bool validateProfileFiles(const std::string& directory) = 0; // PE+C8 4A8580
+    // PE+CC 619360 `mov eax,[ecx+34h]; ret` and PE+D0 4A7DB0 (sret copy of this+38h, RET 4):
+    // the profile index and password the last login stored. [INFERRED] names. The only known
+    // caller is BF2Engine's activateMod pair (0x403E40 / 0x404010).
+    virtual int getLoginProfileIndex() = 0;      // PE+CC 619360 (ICF-shared one-load getter)
+    virtual std::string getLoginPassword() = 0;  // PE+D0 4A7DB0
     // [INFERRED] +A8/+AC/+B0 use unsigned indices/count and a borrowed pointer.
     // Full PE bodies/callers prove the x86 widths, arity and return conventions;
     // int-vs-unsigned and pointer-vs-reference source spelling are not attested.
-    // [FRONTIER] PE+CC..+D4 remain absent; no additional opaque slot is filled.
+    // PE+D4 4ABD10 is the scalar deleting destructor; no destructor slot is declared (see below).
 };
 
+#if !DEDICATED
 struct LocalProfileFixture;
 class LocalProfileManager final : public ILocalProfileManager, public IEventListener {
 public:
@@ -111,8 +119,8 @@ public:
     bool deleteProfile(int profileIndex) override;
     bool createOnlineAccount(const std::string& nick, const std::string& email,
                              const std::string& password, const std::string& country) override;
-    void frontierPrimary30() override;
-    void frontierPrimary34() override;
+    bool hasCurrentProfile(int ignored) override;
+    bool slot34(int ignored, int ignored2) override;
     bool hasProfile(const std::string& profileName) override;
     bool loadCurrentProfile() override;
     bool saveCurrentProfile() override;
@@ -150,7 +158,12 @@ public:
     bool quickLogin(const std::string& name, const std::string& password) override;
     bool saveGlobalSettings() override;
     bool validateProfileFiles(const std::string& directory) override;
+    int getLoginProfileIndex() override;
+    std::string getLoginPassword() override;
     void handleEvent(EventCategory, unsigned int, EventNode*, void*) override; // actual5B74B0 RET16
+    // [CHOSEN, not recovered] Non-virtual, no retail counterpart: once the renderer exists, a Default
+    // profile created in this run takes the renderer-aware defaults (see LocalProfileManagerInit.cpp).
+    void applyFirstStartVideoDefaults();
 private:
     friend struct LocalProfileFixture;
     void reportProfileError(const std::string& message); // [INFERRED] name/caller-discard void; PE4B11A0
@@ -163,11 +176,11 @@ private:
     bool m_profilesDirty;                      // retail+21
     bool m_filterValidProfiles;                // retail+22
     std::vector<LocalProfile> m_profiles;        // retail+24
-    int m_field34;
-    std::string m_field38;
+    int m_field34;                             // retail+34 login's profile index (+CC)
+    std::string m_field38;                     // retail+38 login's password (+D0)
     bool m_field54;
 };
 
+#endif // !DEDICATED
 } }
-#endif
 #endif

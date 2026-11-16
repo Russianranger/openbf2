@@ -10,6 +10,9 @@
 #include "../../IO/Stream/IStream.h"
 #include "ClientGameLogic.h"                   // getAutoInput's runtime !isServer() arm
 #include "../Main/Game.h"                      // isDedicated() - updateClientSettings' client arm
+#if !DEDICATED
+#include "../VoipClient/BF2VoipClient.h"         // bf2VoipClient (ds:0x9A4DA0) - setVoipSessionId
+#endif
 #include "../GeneralSettings.h"                // IGeneralSettings::getAutoReload - updateClientSettings
 #include "../../Core/ClassManager.h"
 #include "../../Core/EventManager.h"
@@ -73,10 +76,15 @@
 #include "../Objects/GameLogicComp/IArmorGLComp.h"   // getDefaultMaterial
 #include "../../Scene/Object/ObjectTypes/Game/IPlayerControlObject.h"
 #include "ActionBuffer.h"                         // sizeof 0x2C - ditto
+#if !DEDICATED
+// BF2.exe 0x5ED220: client tutorial owner.
+#include "PlayerVOHelp.h"
+#endif
 
 namespace dice {
 namespace hfe {
 
+#if DEDICATED
 // [INFERRED] Client voice-over tutorial state owned by Player. Dedicated players leave it null.
 // The constructor and help/update behavior remain declaration-only; the trailing pairs store
 // message intervals and countdowns.
@@ -97,6 +105,7 @@ struct PlayerVOHelp
     std::string labels[82]; // +0x200 on both ports; let the host STL determine stride.
     struct Timer { float interval, remaining; } timers[82];
 };
+#endif
 
 // ds:0x8ACBFA4 - Core/Globals.cpp owns it, declared IBase* with no layout. Same
 // declaration GameLogic.cpp:1028 uses; the two must stay identical or MSVC mangles two
@@ -230,9 +239,7 @@ Player::Player(int index, world::CPersistentExplosionEffectManager* explosionEff
     , m_profileId(0)
     , m_field2E0(1.0f)
     , m_field2E4(0.0f)
-    , m_field2E8(0)
-    , m_field2EC(0)
-    , m_field2F0(0)
+    , m_tearGasPosition()
     , m_field2F4(0.0f)
     , m_field2F8(1.0f)
     , m_gasDamage(0.0f)
@@ -292,6 +299,15 @@ Player::Player(int index, world::CPersistentExplosionEffectManager* explosionEff
     // A virtual call from A constructor, on the table just stamped in. This is
     // io::INetworkable's +0x18 slot, not a private helper - see Player.h.
     init(0);
+
+#if !DEDICATED
+    // BF2.exe 0x505D20..0x505D52.
+    if (!isDedicated())
+    {
+        m_voHelp = new PlayerVOHelp();
+        m_voHelp->loadPlayed();
+    }
+#endif
 
     // Retail also sets a networkable-base float to -1 here; that field has no exposed accessor
     // in this model. Notify AI of the player only when its singleton exists.
@@ -502,8 +518,9 @@ void Player::updateStateMask(unsigned int* mask)
         c->buff[149] = static_cast<unsigned char>(m_field160[4]);
 
     // heal / gave-ammo "recent" flags: set for the 10 ticks after the event (unsigned compare)
-    if (static_cast<unsigned int>(m_healRepairedAtTick + 10) > WorldPref::getTickCount()) *mask |= 0x80000u;
-    if (static_cast<unsigned int>(m_gaveAmmoAtTick + 10) > WorldPref::getTickCount()) *mask |= 0x100000u;
+    const unsigned int tick = static_cast<unsigned int>(WorldPref::getTickCount());
+    if (static_cast<unsigned int>(m_healRepairedAtTick + 10) > tick) *mask |= 0x80000u;
+    if (static_cast<unsigned int>(m_gaveAmmoAtTick + 10) > tick) *mask |= 0x100000u;
 
     // team -> buff[16] - bit 0x200, with a 20-frame re-send after a team change (mask[1]&2)
     slotDword(c, 16) = m_team;
@@ -1947,21 +1964,13 @@ void Player::handleGasClouds(float deltaTime)
     if (!particleSystemManager)
         return;
 
-    // [PLATFORM] This plugin boundary uses RendDX9's MSVC 7.1 vector carrier: allocator at +0,
-    // begin at +4, end at +8. Do not cast it to a native std::vector; the ELF container differs.
+    // The renderer's active-instance vector, shared by reference (issue #7).
     const geom::ParticleSystemInstanceList* const systems = particleSystemManager->getInstances();
-    // The PE re-reads the vector words on every iteration and breaks on a null begin; retain
-    // those repeated reads rather than snapshotting a container that instance calls may mutate.
-    for (unsigned int i = 0; ; ++i)
+    // The PE re-reads the vector's size on every iteration; retain that rather than snapshotting
+    // a container that instance calls may mutate.
+    for (unsigned int i = 0; i < static_cast<unsigned int>(systems->size()); ++i)
     {
-        geom::IParticleSystemInstance* const* const first = systems->begin();
-        if (!first)
-            break;
-        geom::IParticleSystemInstance* const* const last = systems->end();
-        if (i >= static_cast<unsigned int>(last - first))
-            break;
-
-        geom::IParticleSystemInstance* const system = systems->begin()[i];
+        geom::IParticleSystemInstance* const system = (*systems)[i];
         if (!system->getTemplate()->getGasCloudType())
             continue;
 
@@ -2192,10 +2201,7 @@ void Player::setBlurryVision(float fadeTime, float holdTime, float damage)
         if (vehicle)
         {
             const Vec3& position = vehicle->getAbsolutePosition();
-            // These existing three dword carriers hold float bits, not numeric integers.
-            std::memcpy(&m_field2E8, &position.x, sizeof(float));
-            std::memcpy(&m_field2EC, &position.y, sizeof(float));
-            std::memcpy(&m_field2F0, &position.z, sizeof(float));
+            m_tearGasPosition = position;
         }
     }
     m_field2E4 = damage;
@@ -2494,7 +2500,32 @@ const world::IObjectTemplate* Player::getPersonalDecalTemplate() const
 }
 
 // Dedicated-image VO-help hooks are inert; the played query always returns true.
-// These bodies do not implement client tutorial playback.
+#if !DEDICATED
+// PE slots +0x210..+0x21C correspond to ELF +0x214..+0x220: ELF has two destructor slots.
+// BF2.exe 0x4F9F00.
+void Player::enableVOHelp(bool enabled)
+{
+    if (m_voHelp)
+        m_voHelp->enable(enabled);
+}
+// BF2.exe 0x4F9F20.
+void Player::enableVOHelpMessage(int id)
+{
+    if (m_voHelp)
+        m_voHelp->disableMessage(id, false);
+}
+// BF2.exe 0x4F9F40.
+void Player::disableVOHelpMessage(int id)
+{
+    if (m_voHelp)
+        m_voHelp->disableMessage(id, true);
+}
+// BF2.exe 0x4F9F60.
+bool Player::getVOHelpMessagePlayed(int id)
+{
+    return m_voHelp && m_voHelp->messagePlayed(id);
+}
+#else
 void Player::enableVOHelp(bool)
 {
 }
@@ -2511,6 +2542,7 @@ bool Player::getVOHelpMessagePlayed(int)
 {
     return true;
 }
+#endif
 
 // Rename through PlayerManager before changing the local name. Duplicate names
 // are silently rejected.
@@ -2633,6 +2665,11 @@ unsigned short Player::getVoipSessionId()
 void Player::setVoipSessionId(unsigned short sessionId)
 {
     m_voipSessionId = sessionId;
+#if !DEDICATED
+    // BF2.exe 0x4FA481..0x4FA4A2: the local player's id is also the voice client's header id (+0x60).
+    if (bf2VoipClient && this == world::playerManager->getLocalHumanPlayer())
+        bf2VoipClient->setPlayerId(sessionId);
+#endif
 }
 
 // . IPlayer +0x98. One load - IPlayer.h already recorded "(Player +0x158)".
@@ -3610,6 +3647,23 @@ bool Player::getIsSquadLeader() const
     return m_isSquadLeader;                               // byte +0xF5
 }
 
+// [INFERRED] The client tests the new value through a code-virtualised predicate pair before the
+// keep-alive (0x502D50/0x502DB0 -> 0x4FD280/0x4FD380, bodies not statically readable). The same
+// stubs, called as 0x502F30(x, x), produce the stored flag where the ELF stores `x != 0`, so the
+// keep-alive test is read as `x != 0`. The periodic keep-alive (3 s) covers any other reading.
+static void voipKeepAliveOnRoleChange(int value, bool localOnly, const world::IPlayer* self)
+{
+#if !DEDICATED
+    if (isDedicated() || value == 0)
+        return;
+    if (localOnly && self != world::playerManager->getLocalHumanPlayer())
+        return;
+    bf2VoipClient->sendKeepAlive();                     // +0x58, no null test (the client always has one)
+#else
+    (void)value; (void)localOnly; (void)self;
+#endif
+}
+
 // Normalize the public squad id to 16 bits before applying membership side effects.
 void Player::setSquadId(unsigned int id)
 {
@@ -3631,6 +3685,8 @@ void Player::setSquadId(unsigned short id)
 
     if (gameLogic->isServer() && !m_isAI)
         VoipServerConnection::GetInstance()->UpdatePlayerRouting(this);
+
+    voipKeepAliveOnRoleChange(id, false, this);          // PE 0x5040C0..0x5040E6
 }
 
 //  / PE 0x4746B0, 24 B. The bool is explicitly normalised to an int.
@@ -3648,6 +3704,8 @@ void Player::setIsSquadLeader(int leader)
         VoipServerConnection::GetInstance()->UpdatePlayerRouting(this);
 
     static_cast<ISquadManager*>(squadManager)->updateOrderMarkers(this);
+
+    voipKeepAliveOnRoleChange(leader, false, this);      // PE 0x504145..0x504169
 }
 
 //  / PE 0x4746D0, 24 B. The bool is explicitly normalised to an int.
@@ -3675,6 +3733,8 @@ void Player::setIsCommander(int commander)
 
     if (gameLogic->isServer())
         VoipServerConnection::GetInstance()->UpdatePlayerRouting(this);
+
+    voipKeepAliveOnRoleChange(commander, true, this);    // PE 0x504248..0x50427B, local player only
 }
 
 // . IPlayer +0x10C. The same shape one field over, and the very next call in
@@ -4135,11 +4195,20 @@ void Player::update(float deltaTime)
     // 1 & 2: the persistent explosion effects
     world::explosionEffectManager->handleObject(this);
 
-    // [PLATFORM] The client additionally updates an unidentified member before local
-    // explosion effects. That client-only call remains unimplemented.
-    // [RETIRE-WHEN: player-update-client-arm] Identify the member and recover its update.
+#if !DEDICATED
+    // BF2.exe 0x505340..0x505385.
+    // PE +0x58 is getIsRemote (ELF +0x5C), not getIsAIPlayer.
+    if (this == world::playerManager->getLocalHumanPlayer() && !getIsRemote())
+    {
+        if (m_voHelp)
+            m_voHelp->update(deltaTime);
+        world::explosionEffectManager->updateExplosionEffects(deltaTime);
+    }
+#else
+    // The dedicated image updates only the local explosion effects here.
     if (this == world::playerManager->getLocalHumanPlayer() && !getIsRemote())
         world::explosionEffectManager->updateExplosionEffects(deltaTime);
+#endif
 
     // 3: a dead player is not inside a control point
     if (!getIsAlive() && m_isInsideCP)
@@ -4904,9 +4973,10 @@ void Player::setFlagHolder(bool holder)              { m_flagHolder = holder; } 
 bool Player::getFlagHolder() const                   { return m_flagHolder; }           // +0x124
 
 // the firing trio: 0x80F9390 / 0x80F93E0 / 0x80F9410
-// getFiringState IS NOT AN accessor. It ORs the live firing bool with a second field at +0x204,
-// so a player counts as firing when either is set. [UNRESOLVED] what +0x204 is - the ctor zeroes it
-// and nothing recovered writes it - but the OR is compiled and is reproduced.
+// getFiringState IS NOT AN accessor. It ORs the live firing bool with the primary-fire press latch
+// at +0x204 (PE 0x504D00: +0x184 || +0x234), so a player counts as firing when either is set. The
+// client's network apply sets the latch for a remote press; GameClient::stepWorld clears it once
+// it has been read (PE 0x5C056A).
 bool Player::getFiringState() const
 {
     return m_field160[0] != 0 || m_field204 != 0;            // +0x160 || +0x204

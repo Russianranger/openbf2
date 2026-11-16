@@ -1,6 +1,7 @@
 // Path: attested (assert), BF2.exe 0x89E910.
 // [INFERRED] member/helper names. Bodies read from the client PE; no HUD ELF body.
 #include "HudInformationLayer.h"
+#include "IGameClient.h"
 #if !DEDICATED
 #include "../Core/Debug.h"
 #include "../Core/ClassManager.h"
@@ -49,12 +50,6 @@
 namespace dice { namespace hfe {
 namespace world { extern IBase* scoreManager; }
 namespace {
-[[noreturn]] void hudInformationUpdateFrontier(const char* qualified, const char* detail)
-{
-    std::fprintf(stderr, "[FRONTIER] %s reached: %s\n", qualified, detail);
-    std::fflush(stderr);
-    std::abort();
-}
 //  / 0x9A60B4. Identity matters independently of string contents.
 const char emptyString[] = "";
 const wchar_t emptyWideString[] = L"";
@@ -802,11 +797,28 @@ void HudInformationLayer::update(float dt)
         updateWideString(&m_state.TimeToSpawnString, L"");
         updateWideString(&m_state.DemoPausePlayString, hudManager->getLocalizedString(game->getSimulationRate()
             ? "HUD_HUD_DEMO_PAUSE" : "HUD_HUD_DEMO_PLAY").c_str());
-        // [TEMP] [CHOSEN, not recovered] The complete client secondary interface
-        // remains undeclared. Stop before+58, not an invented vtable carrier.
-        // [RETIRE-WHEN: hud-information-demo-client]
-        hudInformationUpdateFrontier("dice::hfe::HudInformationLayer::update",
-            "PE467641: game queryInterface(120002) virtual +58, then +54 demo player ID");
+        // PE 467641: the spectator camera's mode picks the camera button's label (it names the
+        // other mode) and whether the followed player's name shows; the name comes from the
+        // player manager (+0x20) and IPlayer PE +0x20 (getName, one destructor slot).
+        IGameClient* const demoClient = static_cast<IGameClient*>(client);
+        if (demoClient->demoIsFreeFlying()) {                                   // +0x58
+            m_state.DemoPlayerNameShow = false;
+            updateWideString(&m_state.DemoCameraString,
+                hudManager->getLocalizedString("HUD_HUD_DEMO_PLAYER_CAM").c_str());
+        } else {
+            m_state.DemoPlayerNameShow = true;
+            updateWideString(&m_state.DemoCameraString,
+                hudManager->getLocalizedString("HUD_HUD_DEMO_FREE_CAM").c_str());
+        }
+        const char* name = "";
+        if (demoClient->demoGetCurrentPlayerId() != -1) {                       // +0x54, asked twice
+            world::IPlayer* const followed =
+                world::playerManager->getPlayerFromId(demoClient->demoGetCurrentPlayerId());
+            if (followed)
+                name = followed->getName().c_str();
+        }
+        updateString(&m_state.DemoPlayerNameString, name);
+        return;
     } else {
         m_state.DemoPlayerNameShow = false;
         m_state.DemoShow = false;
@@ -817,7 +829,9 @@ void HudInformationLayer::update(float dt)
 
 HudInformationLayer::HudInformationLayer() : m_refCount(1), m_nextId(0)
 {
+#if defined(_M_IX86)
     static_assert(sizeof(State) == 0x518, "Non-STL x86 suffix changed");
+#endif
     m_state.field88 = false;
     m_state.FriendlyTicketBleed = 0;
     m_state.field90 = false;
@@ -995,9 +1009,14 @@ HudInformationLayer::HudInformationLayer() : m_refCount(1), m_nextId(0)
         // The last two overwrite eight bytes of adjacent HUD flags. Copy their
         // representation without inventing a larger source array or correcting
         // the shipped overrun. The destructor frees only the ten real pointers.
+        // [CHOSEN, not recovered] x64 (https://github.com/B2BF/OpenBF2/issues/7): the overrun stays
+        // the same eight flag bytes (+0x234..+0x23B), one 8-byte pointer instead of two 4-byte ones,
+        // so PlayerTeam and kitSelected are untouched as on x86. On x86 every write passes the test.
         const char* initial = emptyString;
-        std::memcpy(reinterpret_cast<unsigned char*>(&m_state) + offsetof(State, optionIcons) + i * sizeof(initial),
-                    &initial, sizeof(initial));
+        const size_t overrunEnd = offsetof(State, optionIcons) + sizeof(m_state.optionIcons) + 8;
+        const size_t at = offsetof(State, optionIcons) + i * sizeof(initial);
+        if (at + sizeof(initial) <= overrunEnd)
+            std::memcpy(reinterpret_cast<unsigned char*>(&m_state) + at, &initial, sizeof(initial));
         m_state.radioNames[i] = emptyWideString;
         m_state.radioVehicleNames[i] = emptyWideString;
         m_state.squadNames[i] = emptyWideString;

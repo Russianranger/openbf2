@@ -1,5 +1,8 @@
 // Commander HUD controls. [INFERRED] Owner, name and source placement.
 #include "HudCommander.h"
+#if !defined(_MSC_VER) || !defined(_M_IX86)
+#include "../Math/PortableX87.h"
+#endif
 #if !DEDICATED
 #include "BF2HudManager.h"
 #include "Bf2MenuMapNode.h"
@@ -11,6 +14,7 @@
 #include "../Core/System.h"
 #include "../Game/HudInformationLayer.h"
 #include "../Game/Main/BF2ClientSeams.h"
+#include "../Game/VoipClient/BF2VoipClient.h"         // bf2VoipClient slots (vtable 0x89C1A8)
 #include "../Game/IGame.h"
 #include "../Game/IGameLogic.h"
 #include "../Game/GameEvents/VoipPlayerMuteEvent.h"
@@ -20,7 +24,6 @@
 #include "../Game/Objects/GameLogicComp/IArmorGLComp.h" // hit points +3C / +84
 #include "../Scene/Object/PlayerManager.h"
 #include <algorithm>
-#include <cstdio>     // appendLeaderVoipCells [FRONTIER] diagnostic.
 #include <cstdlib>
 #include <cstring>
 #include <new>
@@ -71,6 +74,8 @@ namespace {
 // subtraction before its separate float store, not the rounded remaining field.
 void updateCooldown(float deadline, double now, float duration, float& remaining, float& fraction)
 {
+#if defined(_WIN32)
+#if defined(_M_IX86)
     float* remainingValue = &remaining;
     float* fractionValue = &fraction;
     __asm {
@@ -82,6 +87,20 @@ void updateCooldown(float deadline, double now, float duration, float& remaining
         mov eax, fractionValue
         fstp dword ptr [eax]
     }
+#else
+    // [PLATFORM] x64: SSE2 arithmetic (x87 keeps 80-bit intermediates).
+    // The fraction divides the unrounded difference, not the stored remaining value.
+    const double left = static_cast<double>(deadline) - now;
+    remaining = static_cast<float>(left);
+    fraction = static_cast<float>(left / duration);
+#endif
+#else
+// [CHOSEN, not recovered] Preserve the S2.1 POSIX numeric arm (docs/macos-port.md).
+    float* remainingValue = &remaining;
+    float* fractionValue = &fraction;
+    // [CHOSEN, not recovered] Preserve x87 retained remaining value for fraction.
+    bf2x87::cooldown(deadline, now, duration, remaining, fraction);
+#endif
 }
 }
 HudCommander::HudCommander(meme::System* system)
@@ -264,9 +283,9 @@ void HudCommander::appendMemberCells(world::IPlayer* player, int slot, int squad
 {
     const int sel = isSquadSelected(squad);                                       // +0x30
     meme::Color text = commanderIconColors[sel];                                  // A1C6B8, copied now
-    int frame = m_textures[3];                                                    // +FC iconframe
+    meme::TextureHandle frame = m_textures[3];                                    // +FC iconframe
     if (player && world::playerManager->getNrOfPlayersInSquad(m_team, squad) > 0) {   // PE +0x9C
-        int icon = hudManager->getPlayerVehicleIcon(player, true);                // +0x60
+        meme::TextureHandle icon = hudManager->getPlayerVehicleIcon(player, true); // +0x60
         if (!icon) {
             icon = hudManager->getPlayerKitIcon(player, false, false);            // +0x64
             if (!icon)
@@ -333,7 +352,6 @@ void HudCommander::appendMemberCells(world::IPlayer* player, int slot, int squad
 }
 
 // Appends the squad leader's voice-chat indicators.
-// [RETIRE-WHEN: client-voip-optional] Complete and validate the corresponding HudCommander operation.
 void HudCommander::appendLeaderVoipCells(int squad)
 {
     const int sel = isSquadSelected(squad);                                       // +0x30
@@ -358,9 +376,9 @@ void HudCommander::appendLeaderVoipCells(int squad)
                 mutedLocally = true;
                 break;
             }
-    int icon;
+    meme::TextureHandle icon;
     if (mutedLocally)
-        icon = m_textures[4];                                                     // +100 voipMuteGreyCommander
+        icon = m_textures[4];                                                    // +100 voipMuteGreyCommander
     else if (leader->getIsMuted())                                                // PE +0x274
         icon = m_textures[5];                                                     // +104 voipMuteCommander
     else if (leader->getIsTalking()) {                                            // PE +0x278
@@ -374,13 +392,8 @@ void HudCommander::appendLeaderVoipCells(int squad)
     const meme::Color& cell = commanderCellColors[sel];
     m_data->appendImageCell0x7c8300(32, m_textures[13], 15.0f, 15.0f, 0.0f, m_field0bc,
         cell.r, cell.g, cell.b, cell.a);
-    if (!bf2VoipClient) {                                                         // see the banner
-        std::fprintf(stderr, "[FRONTIER] dice::hfe::hud::HudCommander::appendLeaderVoipCells "
-                             "reached with no voice client (BF2.exe 79410A reads bf2VoipClient "
-                             "+0xA0 unguarded; client-voip-optional, RW-94)\n");
-        std::fflush(stderr);
-        std::abort();
-    }
+    // BF2.exe 0x79410A reads bf2VoipClient +0xA0 with no null test: the client image always constructs
+    // the voice client in BF2Engine::initEngine (0x40C351).
     // ds:97DE40, a never-written .data word: opaque yellow while the leader channel is in use.
     static const meme::Color kLeaderChannelColor = {1.0f, 1.0f, 0.0f, 1.0f};
     const meme::Color& frameColor = bf2VoipClient->getUsingLeaderChannel()       // retail +0xA0
@@ -395,7 +408,7 @@ void HudCommander::appendLeaderVoipCells(int squad)
 // Appends the pending request indicators.
 void HudCommander::appendRequestCells(int squad)
 {
-    int icon = m_textures[8];                                                     // +110 empty.tga
+    meme::TextureHandle icon = m_textures[8];                                     // +110 empty.tga
     const int sel = isSquadSelected(squad);
     static_cast<ISquadManager*>(squadManager)->getSquadInfo(m_team, squad);       // +0x28, dropped
     if (world::playerManager->getNrOfPlayersInSquad(m_team, squad) == 0) {

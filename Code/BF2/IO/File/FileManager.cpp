@@ -16,6 +16,7 @@
 #include <windows.h>
 #else
 #include <unistd.h>
+#include <sys/stat.h>
 #endif
 
 #include <string>
@@ -38,6 +39,8 @@ static const char* const kRootOverloadReplacement = "";
 // Absolute paths bypass substitution.
 namespace {
 
+// macOS client: isHostAbsolutePath (Core/StringUtil) tells host paths from game paths with a
+// leading '/' (SwiffPlayer's "$/Levels/<level>/Info/loadMap.png" reaches open() as "/Levels/...").
 
 // `base` is the search-path entry being tried. `out` receives the expanded result.
 void expandPath(std::string& path, const std::string& base, std::string* out,
@@ -47,7 +50,11 @@ void expandPath(std::string& path, const std::string& base, std::string* out,
     static const std::string rootPrefix = "@ROOT@";     // guard 0x8AC3D58
     static const std::string modPrefix  = "@MOD@";      // guard 0x8AC3D60
 
+#if defined(__APPLE__) && !DEDICATED
+    if (isHostAbsolutePath(path))
+#else
     if (isPathAbsolute(path))
+#endif
     {
         out->assign(path);
         return;
@@ -87,6 +94,25 @@ void expandPath(std::string& path, const std::string& base, std::string* out,
     else         *out = prefix + base + path;
 }
 
+// Folds an expanded loose-file path before an existence or enumeration test.
+#if defined(__APPLE__) && !DEDICATED
+// [CHOSEN, not recovered] c-loopback: the macOS client's @HOME@ substitution is absolute
+// (Platform/macOS/ClientPaths), and goUpInPath turns "/Users/..." into the cwd-relative
+// "Users/...". fileExistsEx/getFileExists/findFiles then never see @HOME@ files (no local
+// profile was ever found), while open(), which skips the fold, reads them. Keep the leading '/'.
+// The Windows home is a drive path and the ELF dedicated home is never read, so both keep the
+// shipped fold unchanged.
+void goUpInExpandedPath(std::string& full)
+{
+    const bool absolute = !full.empty() && full[0] == '/';
+    goUpInPath(full);
+    if (absolute && (full.empty() || full[0] != '/'))
+        full.insert(full.begin(), '/');
+}
+#else
+inline void goUpInExpandedPath(std::string& full) { goUpInPath(full); }
+#endif
+
 } // anonymous namespace
 
 // Reports and removes the legacy bf2/content/ path segment, matched case-insensitively.
@@ -125,8 +151,20 @@ void FileManager::getWritePath(const std::string& name, std::string& out)
     if (path.find("@ROOT@") == 0)
         out = m_fileSystem->getRootSubstitution() + path.substr(6);
     // 3. @home@ prefix
+#if defined(__APPLE__) && !DEDICATED
+    // [CHOSEN, not recovered] The macOS client's @HOME@ is absolute; goUpInPath below drops a
+    // leading '/' (harmless for Windows drive paths). Normalize only the part after the macro.
+    else if (path.find("@HOME@") == 0)
+    {
+        std::string tail = path.substr(6);
+        goUpInPath(tail);
+        out = m_fileSystem->getHomeSubstitution() + "/" + tail;
+        return;
+    }
+#else
     else if (path.find("@HOME@") == 0)
         out = m_fileSystem->getHomeSubstitution() + path.substr(6);
+#endif
     // 4. otherwise relative to the write path
     else
         out = writePath + path;
@@ -271,7 +309,7 @@ std::string FileManager::fileExistsEx2(const std::string& name)
         std::string full;
         std::string copy = path;
         expandPath(copy, *it, &full, m_fileSystem);
-        goUpInPath(full);
+        goUpInExpandedPath(full);
         if (m_fileSystem->fileExists(full))
             return full;
     }
@@ -535,7 +573,7 @@ std::string FileManager::fileExistsEx(const std::string& name, bool skipArchives
         std::string full;
         std::string p = path;
         expandPath(p, *it, &full, m_fileSystem);
-        goUpInPath(full);
+        goUpInExpandedPath(full);
 
         if (m_fileSystem->fileExists(full))
             return full;
@@ -945,7 +983,7 @@ int FileManager::findFiles(const std::string& pattern, bool recursive,
             std::string full;
             std::string p = path;
             expandPath(p, *it, &full, m_fileSystem);
-            goUpInPath(full);
+            goUpInExpandedPath(full);
 
             m_fileSystem->findFiles(full, recursive, scratch);
 

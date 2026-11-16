@@ -27,8 +27,8 @@
 //     `host` module and imports `bf2`. This is why openbf2.con runs before Python init - load it
 //     afterward and the hooks are too late.
 //   - This loader does not itself reroute sockets. bf2hub's GameSpy/master redirection relied on an
-//     install-time patch of the host's import table that a runtime load does not reproduce; OpenBF2
-//     points the engine at the correct master-server address in source instead (see the issue).
+//     install-time patch of the host's import table that a runtime load does not reproduce; the
+//     online services' domain is selected with +gamespy (Game/MatchMaking/OnlineProvider.h).
 
 #include "../../Core/ConsoleObjectMacro.h"
 
@@ -126,15 +126,26 @@ std::vector<std::string> resolveModuleCandidates(const std::string& name)
         out.push_back(name);
         return out;
     }
+    // [CHOSEN, not recovered] macOS uses .dylib for the same lib<name> convention; a typed .so or
+    // .dll is still stripped so one config line keeps working on every build.
+#if defined(__APPLE__)
+    const char* const suffix = ".dylib";
+#else
+    const char* const suffix = ".so";
+#endif
     std::string base = name;
     if (endsWithNoCase(base, ".so"))
         base.erase(base.size() - 3);
+#if defined(__APPLE__)
+    else if (endsWithNoCase(base, ".dylib"))
+        base.erase(base.size() - 6);
+#endif
     else if (endsWithNoCase(base, ".dll"))
         base.erase(base.size() - 4);
     const std::string stem = (base.compare(0, 3, "lib") == 0) ? base.substr(3) : base;
-    out.push_back(std::string("lib") + stem + ".so");
+    out.push_back(std::string("lib") + stem + suffix);
     if (base != std::string("lib") + stem)              // skip the duplicate when the name already had lib
-        out.push_back(base + ".so");
+        out.push_back(base + suffix);
 #endif
     return out;
 }

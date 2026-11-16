@@ -15,6 +15,8 @@
 
 #include <cctype>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 
 namespace dice {
 namespace hfe {
@@ -213,6 +215,12 @@ bool SoundFile::loadWav(int* loopStart, int* loopEnd)
     if (rate <= (unsigned int) targetRate)
         return ok;
     const int factor = (int) (rate / (unsigned int) targetRate);
+#if !defined(_WIN32)
+    if (std::getenv("BF2_SOUND_TRACE"))                                // [TEMP] BF2_SOUND_TRACE
+        std::fprintf(stderr, "[SND] load %s: %d Hz x%d -> %d Hz mono (factor %d, quality %d)\n", m_name.c_str(),
+                     m_format.samplesPerSecond, m_format.channels, targetRate, factor,
+                     g_soundEngineInstance->getQualityLevel());
+#endif
     if (loopStart) *loopStart /= factor;
     if (loopEnd)   *loopEnd   /= factor;
     const int newSamples = (int) ((unsigned int) m_format.numSamples / (unsigned int) factor);
@@ -238,7 +246,6 @@ bool SoundFile::loadWav(int* loopStart, int* loopEnd)
     return ok;
 }
 
-#if defined(BF2AUDIO_WITH_VORBIS)
 namespace {
 // the memory-file callbacks (off_1003F370).
 size_t oggRead(void* dst, size_t size, size_t count, void* source)
@@ -265,7 +272,6 @@ int oggSeek(void* source, ogg_int64_t offset, int whence)
 int  oggClose(void* source) { ((SoundFile::MemoryFile*) source)->position = 0; return 0; }
 long oggTell(void* source)  { return ((SoundFile::MemoryFile*) source)->position; }
 }
-#endif
 
 // Read the whole file into memory, open it once to validate the vendor and
 // read the stream parameters, close the decoder again; the bytes stay for the streaming samples.
@@ -284,7 +290,6 @@ bool SoundFile::loadOgg(int* loopStart, int* loopEnd)
             data = (char*) renddx9abi::engineAlloc(size);
             if (g_soundFileIO->read(handle, data, size) == size)
             {
-#if defined(BF2AUDIO_WITH_VORBIS)
                 MemoryFile mem;
                 std::memset(&mem, 0, sizeof(mem));
                 mem.data = data; mem.size = size; mem.position = 0;
@@ -330,14 +335,6 @@ bool SoundFile::loadOgg(int* loopStart, int* loopEnd)
                         g_soundTrace->warning(sndFormat("Failed to get vorbis file comment: %s", ovErrorString(0)), kFile, 469);
                     }
                 }
-#else
-                // [FRONTIER] [TEMP] [CHOSEN, not recovered] (opt-out build: BF2AUDIO_NO_VORBIS=1; the vendored decoder is linked by default)
-                // No decoder linked: report on the shipped body's own error slot and fail as it
-                // fails on an unreadable stream (the file stays unloaded; the error repeats per
-                // attempt exactly as "Failed to open vorbis file" would).
-                g_soundTrace->error(sndFormat("[FRONTIER] dice::hfe::SoundFile::loadOgg reached for %s: vorbis decoder not linked",
-                                              m_name.c_str()), kFile, 462);
-#endif
             }
         }
     }

@@ -1,5 +1,9 @@
 // Weapon status and ammunition display.
 #include "HudAmmo.h"
+#include "HudWidescreen.h"
+#if !defined(_MSC_VER) || !defined(_M_IX86)
+#include "../Math/PortableX87.h"
+#endif
 #if !DEDICATED
 #include "BF2HudManager.h"
 #include "HudBlinker.h"
@@ -36,10 +40,15 @@
 #include "Ref2System.h"                       // getRenderView, 7AD390
 #include "../RendMisc/IRenderView.h"          // +54 getOrthoWidth, +5C getOrthoHeight
 #include "../Game/Main/BF2ClientSeams.h"
+#include "../Game/VoipClient/BF2VoipClient.h"         // bf2VoipClient slots (vtable 0x89C1A8)
 #include "../External/BFMeme/Data.h"
 #include "../External/BFMeme/System.h"
 #include "../External/BFMeme/Pointer.h"
+#if defined(_WIN32)
 #include <windows.h>
+#elif defined(__APPLE__)
+#include "../Platform/macOS/MacSystem.h"   // [CHOSEN, not recovered] MessageBoxA's counterpart
+#endif
 #include <cmath>
 #include <cstring>
 #include <cwchar>                                     // wcscmp / wcslen - the wide updateString
@@ -254,7 +263,7 @@ void HudAmmo::updatePointer(bool enabled)
 {
     if (hudManager->isPointerEnabled() == enabled) return;
     if (enabled) {
-        const int texture = m_system->loadTexture(m_field1a0, true);
+        const meme::TextureHandle texture = m_system->loadTexture(m_field1a0, true);
         const int mode = hudManager->getMode();
         hudManager->enablePointer(texture, mode);
         auto* pointer = static_cast<meme::Pointer*>(m_system->getPointerObject());
@@ -375,7 +384,9 @@ void HudAmmo::updateCrosshairPositions(world::IWeaponObject* weapon)
         static_cast<menu::Ref2System*>(m_system)->getRenderView());
     const int deviation  = static_cast<int>(std::ceil(
         static_cast<double>(weapon->getDeviation()) * m_field100));
-    const int halfWidth  = static_cast<int>(std::ceil(
+    // [CHOSEN, not recovered] Issue #33: crosshair bindings remain on the authored 800x600
+    // canvas, including the maximum-deviation branch. Preserve the deviation clamp.
+    const int halfWidth  = widescreen::enabled(m_system) ? 400 : static_cast<int>(std::ceil(
         static_cast<double>(view->getOrthoWidth()) * 0.5));
     const int halfHeight = static_cast<int>(std::ceil(
         static_cast<double>(view->getOrthoHeight()) * 0.5));
@@ -1010,7 +1021,9 @@ bool abilityFlag(world::IAbilityGLComp* ability, unsigned index)
 }
 float armorAbilityRatio(float hitPoints, float maximum, float previous, bool blend)
 {
+#if defined(_WIN32)
     const float half = 0.5f;
+#if defined(_M_IX86)
     float result;
     __asm {
         fld hitPoints
@@ -1023,11 +1036,27 @@ float armorAbilityRatio(float hitPoints, float maximum, float previous, bool ble
         fstp result
     }
     return result;
+#else
+    // [PLATFORM] x64: SSE2 arithmetic (x87 keeps 80-bit intermediates).
+    double ratio = static_cast<double>(hitPoints) / maximum;
+    if (blend) ratio = (ratio + previous) * half;
+    return static_cast<float>(ratio);
+#endif
+#else
+// [CHOSEN, not recovered] Preserve the S2.1 POSIX numeric arm (docs/macos-port.md).
+    const float half = 0.5f;
+    float result;
+    // [CHOSEN, not recovered] Preserve x87 retained division and optional blend.
+    result = bf2x87::armorRatio(hitPoints, maximum, previous, blend);
+    return result;
+#endif
 }
 float ammoAbilityRatio(int status, float previous, bool blend)
 {
+#if defined(_WIN32)
     const float scale = 0.06666667014360428f; // PE934BB0, bits3D888889
     const float half = 0.5f;
+#if defined(_M_IX86)
     float result;
     __asm {
         fild status
@@ -1040,6 +1069,21 @@ float ammoAbilityRatio(int status, float previous, bool blend)
         fstp result
     }
     return result;
+#else
+    // [PLATFORM] x64: SSE2 arithmetic (x87 keeps 80-bit intermediates).
+    double ratio = static_cast<double>(status) * scale;
+    if (blend) ratio = (ratio + previous) * half;
+    return static_cast<float>(ratio);
+#endif
+#else
+// [CHOSEN, not recovered] Preserve the S2.1 POSIX numeric arm (docs/macos-port.md).
+    const float scale = 0.06666667014360428f; // PE934BB0, bits3D888889
+    const float half = 0.5f;
+    float result;
+    // [CHOSEN, not recovered] Preserve x87 signed integer multiply and optional blend.
+    result = bf2x87::ammoRatio(status, previous, blend);
+    return result;
+#endif
 }
 const char repairAbilityIcon[] = "Ingame/Player/Bars/abilitybar_smallRepairIcon.tga";
 const char medicAbilityIcon[] = "Ingame/Player/Bars/abilitybar_smallMedicIcon.tga";
@@ -1228,7 +1272,11 @@ bool registerReference(meme::System* system, Value* value,
         return true; // The registration result is discarded.
     }
     const std::string caption = formatString("Failed to register: %s in %s", name.c_str(), container.c_str());
+#if defined(__APPLE__)
+    macos::showMessageBox("Error RegisterData", caption.c_str());
+#else
     MessageBoxA(0, "Error RegisterData", caption.c_str(), 0); // Retail text/caption order.
+#endif
     return false;
 }
 }

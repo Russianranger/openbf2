@@ -1,7 +1,9 @@
 // Diagnostic frontier support, [CHOSEN, not recovered]. Default behavior logs and aborts.
 // BF2_RENDDX9_FRONTIER=continue permits call-order investigation only; it does not validate behavior.
 // Unknown-arity placeholders can unbalance the x86 stack when allowed to return, so only the first
-// frontier reached in such a run is reliable. Keep abort as the default.
+// frontier reached in such a run is reliable. Keep abort as the default for development.
+// [CHOSEN, not recovered] Release packages built by CI compile with BF2_FRONTIER_DEFAULT_CONTINUE=1:
+// they log and continue unless the env var says "abort" (see frontierTrapEnabled in Frontier.cpp).
 // [RETIRE-WHEN: RW-48] Delete this helper when the last RD9_FRONTIER in the image is recovered.
 
 #ifndef RENDDX9ABI_FRONTIER_H
@@ -33,9 +35,9 @@ bool frontierTrapEnabled();
 void installCrashReporter();
 void removeCrashReporter();
 
-// A pointer as a 32-bit integer, for log lines. This image is 32-bit by construction (the whole
-// rebuild is - see agents.md) so the truncation cannot lose anything; the helper exists so that
-// every caller does not have to reach for <windows.h> just to print a `this`.
+// A pointer as a 32-bit integer for "0x%08X" log lines. On x86 that is the whole pointer. On x64 it
+// is only the low 32 bits: a log-line tag, never converted back to a pointer. New log lines print
+// the pointer itself with "0x%p", which reads identically on x86 and shows all 16 digits on x64.
 unsigned int addr(const void* p);
 
 } // namespace renddx9abi

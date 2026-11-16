@@ -4,25 +4,35 @@
 
 #include "FileManager.h"     // io::fileManager - open() goes through the virtual filesystem
 #include "../../Math/Vec3.h"
+#include <iostream>
+#if !defined(_WIN32)
+#include "../../Platform/Utf16.h"
+#endif
 
 namespace dice {
 namespace hfe {
 namespace io {
 
+// static init: ELF 0x48D4F0 (__tcf_0 0x48D550, _GLOBAL__I 0x48D580): iostream only.
+
 // Owns one stream reference and releases it on destruction.
+// ELF 0x48CA20, 0x48CA30.
 File::File()
     : m_file(0)
 {
 }
 
-// Opens path with the requested mode, access and flags.
-// [UNRESOLVED] Whether the original constructor forwards flags or always passes zero.
+// Opens path with the requested mode and access.
+// ELF 0x48CA40, 0x48CA90; engine 0x8435080, 0x84350C0.
 File::File(const std::string& path, IFileSystem::FileMode mode, IFileSystem::FileAccess access, unsigned int flags)
     : m_file(0)
 {
-    open(path, mode, access, flags);
+    // shipped defect: the constructor discards flags.
+    (void)flags;
+    open(path, mode, access, 0);
 }
 
+// ELF 0x48CAE0, 0x48CB00.
 File::~File()
 {
     if (m_file)
@@ -97,10 +107,35 @@ bool File::read(float& v)          { return read(&v, sizeof(v)) == sizeof(v); }
 bool File::read(double& v)         { return read(&v, sizeof(v)) == sizeof(v); }
 bool File::read(bool& v)           { return read(&v, sizeof(v)) == sizeof(v); }
 
+// ELF 0x48CCF0; engine 0x84352F0.
+unsigned int File::write(std::ostringstream& s)
+{
+    const std::string text = s.str();
+    return write(text.c_str(), static_cast<unsigned int>(text.length()));
+}
+
+// Reads through delimiter, consuming it. Empty input leaves out unchanged and returns false.
+// Embedded NUL truncates out; the 4096-character buffer is unchecked.
+// ELF 0x48CF90; engine 0x8435580.
+bool File::read(std::string& out, char delimiter)
+{
+    char buffer[4096];
+    unsigned int count = 0;
+    while (m_file->read(buffer + count, 1) == 1 && buffer[count] != delimiter)
+        ++count;
+    buffer[count] = 0;
+    if (count == 0)
+        return false;
+    out = buffer;
+    return true;
+}
+
 // Reads wide characters through delimiter, consuming it and returning true even on EOF or short read.
 // Embedded NUL truncates out. Input must fit the unchecked 4096-character buffer.
+// ELF 0x48D050; engine 0x8435620 use sizeof(wchar_t) disk units.
 bool File::read(std::wstring& out, wchar_t delimiter)
 {
+#if defined(_WIN32) || defined(BF2_IMAGE_AIDLL)
     wchar_t buffer[4096];
     unsigned int count = 0;
     while (m_file->read(buffer + count, sizeof(wchar_t)) == sizeof(wchar_t)
@@ -108,6 +143,18 @@ bool File::read(std::wstring& out, wchar_t delimiter)
         ++count;
     buffer[count] = 0;
     out = buffer;
+#else
+    // [CHOSEN, not recovered] The native engine reads retail UTF-16LE game text.
+    // The AI DLL retains the ELF's native-wchar_t reader.
+    // Preserve delimiter consumption, NUL truncation, EOF success and the original buffer bound.
+    char16_t buffer[4096];
+    unsigned int count = 0;
+    while (platform::readUtf16LE(*m_file, buffer[count])
+           && buffer[count] != delimiter)
+        ++count;
+    buffer[count] = 0;
+    out = platform::utf16ToWide(buffer);
+#endif
     return true;
 }
 
@@ -125,6 +172,14 @@ bool File::write(bool v)           { return write(&v, sizeof(v)) == sizeof(v); }
 bool File::write(const std::string& v)
 {
     return write(v.c_str(), static_cast<unsigned int>(v.size())) == v.size();
+}
+
+// Writes native wide-character bytes, without a length prefix or trailing NUL.
+// ELF 0x48D400; engine 0x84359B0. This is not a UTF-16 encoder on POSIX.
+bool File::write(const std::wstring& v)
+{
+    const unsigned int bytes = static_cast<unsigned int>(v.length() * sizeof(wchar_t));
+    return write(v.c_str(), bytes) == bytes;
 }
 
 // Reads or writes vector components as raw structure bytes, without endian conversion.

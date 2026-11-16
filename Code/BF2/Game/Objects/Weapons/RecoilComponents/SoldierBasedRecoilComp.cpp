@@ -195,7 +195,7 @@ float SoldierBasedRecoilComp::getRecoil(float recoil)
 
 // .  The ancestor walk starts at the weapon's parent (not the weapon),
 // and the freshly calculated sample precedes both the ring advance and its tick write.
-void SoldierBasedRecoilComp::postFire(WeaponFireEvent&)
+void SoldierBasedRecoilComp::postFire(WeaponFireEvent& event)
 {
     IObject* soldierObject = 0;
     for (IObject* object = m_initObject->getParent(); object && !soldierObject;
@@ -214,6 +214,8 @@ void SoldierBasedRecoilComp::postFire(WeaponFireEvent&)
         m_recoilTicks[m_currentRecoilIndex] =
             static_cast<unsigned int>(WorldPref::getTickCount());
     }
+    // BF2.exe 0x609318..0x609690 (ledger N2 17b) gives the local occupant's Falcon a "RecoilPunch"
+    // here; it needs a device (archived, Code/Archive/NovintFalcon).
 }
 
 void SoldierBasedRecoilComp::setZoom(int zoom)

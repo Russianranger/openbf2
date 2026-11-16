@@ -5,11 +5,18 @@
 // Specialized client/effect branches retain named [FRONTIER] boundaries.
 
 #include "GenericProjectile.h"
+#include "../GeometryPartAccess.h"   // named geometry operations (non-MSVC)
+#if defined(BF2_STATIC_PLUGINS) && !defined(_MSC_VER)
+// [CHOSEN, not recovered] One native scale-interface declaration in every image.
+#include "../../../Geom/IScaleable.h"
+#endif
+#if defined(BF2_STATIC_PLUGINS) && !defined(_MSC_VER)
+// [CHOSEN, not recovered] Native static geometry tables retain PE slot order.
+#include "../../../Geom/NativeGeometrySlots.h"
+#endif
 
 #include <cfloat>                                   // FLT_EPSILON
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 
 #include "GenericProjectileTemplate.h"
@@ -25,9 +32,10 @@
 #include "../IWeaponObject.h"
 #include "../Networkables/Networkables.h"
 #include "../../../AI/AIInterface/BFKnowledge/BFCollisionHandler.h"
+#include "../../../AI/AIDLL/AI/Main/CommonSingletonServer.h"   // m_iBFCollisionHandler
 #include "../../../Core/Ids.h"
 #include "../../../Core/Debug.h"                     // getStickTransformation's retail error arm
-#include "../../../Core/Random.h"                    // g_random - retail distribution sampler
+#include "../../../Core/Random.h"                    // Rand - retail distribution sampler
 #include "../../../Core/System.h"                    // launch clocks / ticks
 #include "../../../Core/WeakPtr.h"                   // the +0x174 ctrl read - PCO's idiom
 #include "../../../Geom/IGeometryTemplate.h"
@@ -49,10 +57,6 @@
 
 namespace dice {
 namespace hfe {
-namespace ai {
-// Stored as an erased pointer; IBFCollisionHandler does not derive from IBase.
-extern IBase* g_bfCollisionHandler;
-}
 namespace world {
 
 extern IBase* materialManager;      // ds:0x8AD2820, defined in Core/Globals.cpp
@@ -61,11 +65,15 @@ namespace {
 
 // IScaleable consists of the IBase quartet followed by setScale. Both activate and updateTracer
 // query exactly this IID before making the typed call at +0x10.
+#if defined(BF2_STATIC_PLUGINS) && !defined(_MSC_VER)
+using IScaleable = geom::IScaleable;
+#else
 class IScaleable : public IBase
 {
 public:
     virtual void setScale(const Vec3&) = 0;
 };
+#endif
 
 float unitRandom(Random& random)
 {
@@ -85,20 +93,20 @@ float sampleRandomDistribution(const RandomDistribution& distribution)
         break;
     case CRD_UNIFORM:
         sample = distribution.value
-            + (distribution.variation - distribution.value) * unitRandom(g_random);
+            + (distribution.variation - distribution.value) * unitRandom(Rand);
         break;
     case CRD_EXPONENTIAL:
-        sample = -distribution.value * static_cast<float>(std::log(unitRandom(g_random)));
+        sample = -distribution.value * static_cast<float>(std::log(unitRandom(Rand)));
         break;
     case CRD_NORMAL:
-        sample = distribution.value + g_random.getNormal() * distribution.variation;
+        sample = distribution.value + Rand.getNormal() * distribution.variation;
         break;
     default:
         sample = 0.0f;
         break;
     }
 
-    if (distribution.relative && unitRandom(g_random) <= 0.5f)
+    if (distribution.relative && unitRandom(Rand) <= 0.5f)
         sample = -sample;
     return sample;
 }
@@ -112,13 +120,13 @@ IObjectTemplate* getGeometryTemplate(IBase* geometry)
     // ordinal, including its single destructor slot, with eight-byte entries.
     enum { GetTemplateIndex = 0x38 / 4 };
     typedef IObjectTemplate* (__thiscall *GetTemplateFn)(void*);
-#else
-    enum { GetTemplateIndex = 0x3C / 4 };
-    typedef IObjectTemplate* (*GetTemplateFn)(void*);
-#endif
     void** const vtable = *reinterpret_cast<void***>(geometry);
     GetTemplateFn const getTemplate = reinterpret_cast<GetTemplateFn>(vtable[GetTemplateIndex]);
     return getTemplate(geometry);
+#else
+    // Non-MSVC: the named geometry_part operation (ELF +0x3C).
+    return static_cast<IObjectTemplate*>(geometry_part::getTemplate(geometry));
+#endif
 }
 
 IPlayerControlObject* findPlayerControlObject(IObject* object)
@@ -155,14 +163,6 @@ void normaliseVec3(Vec3& v)
     }
     const float inverse = 1.0f / sqrtf(lengthSq);
     v.x *= inverse; v.y *= inverse; v.z *= inverse;
-}
-
-// Reports and stops unresolved projectile operations.
-void projectileFrontier(const char* method)
-{
-    std::fprintf(stderr, "[FRONTIER] dice::hfe::world::GenericProjectile::%s reached\n", method);
-    std::fflush(stderr);
-    std::abort();
 }
 
 } // namespace
@@ -511,8 +511,8 @@ void GenericProjectile::resetProjectile(bool a2)
         gameLogic->removeProjectile(this);
 
     // . Drop this projectile from the AI's collision tracking before the trail goes.
-    if (ai::g_bfCollisionHandler)
-        reinterpret_cast<ai::IBFCollisionHandler*>(ai::g_bfCollisionHandler)
+    if (ai::CommonSingletonServer::m_iBFCollisionHandler)
+        static_cast<ai::IBFCollisionHandler*>(ai::CommonSingletonServer::m_iBFCollisionHandler)
             ->handleProjectileTimeout(static_cast<IProjectileObject*>(this), this);
 
     destroyTrailEffect();
@@ -1052,8 +1052,8 @@ void GenericProjectile::detonate(bool forced)
     objectManager->postMessage(this, static_cast<TemplateMessage>(32), destroyDelay);
 
     // . The same removal resetProjectile does, and the last thing detonate does.
-    if (ai::g_bfCollisionHandler)
-        reinterpret_cast<ai::IBFCollisionHandler*>(ai::g_bfCollisionHandler)
+    if (ai::CommonSingletonServer::m_iBFCollisionHandler)
+        static_cast<ai::IBFCollisionHandler*>(ai::CommonSingletonServer::m_iBFCollisionHandler)
             ->handleProjectileTimeout(static_cast<IProjectileObject*>(this), this);
 }
 

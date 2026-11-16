@@ -1,7 +1,8 @@
 # =================================================================================================
 # BF2Editor - the rebuilt BF2 Editor (AGENTS.md "Editor").
 #
-# Added by the root CMakeLists.txt inside its Windows-x86-only client block. EVERY TARGET HERE IS
+# Added by the root CMakeLists.txt inside its Windows client block (x86 and the native x64 client,
+# https://github.com/B2BF/OpenBF2/issues/7). EVERY TARGET HERE IS
 # EXCLUDE_FROM_ALL: no server, archive, check or client target depends on the editor.
 #
 # The editor links the SAME client object set bf2_client links (bf2_client_objects, DEDICATED=0);
@@ -10,7 +11,7 @@
 # time here with BF2_IMAGE_EDITOR=1 and filtered out of the client objects (bf2_editor_shared_sources
 # below lists them). See docs/building.md.
 #
-#   bf2_editor              BF2Editor.exe, a /FORCE diagnostic link like bf2_client
+#   bf2_editor              BF2Editor.exe, strict link
 #   bf2_editor_renddx9      the editor's OWN native RendDX9.dll, built into this build tree and staged
 #                           beside BF2Editor.exe (every bf2_editor build runs it)
 #   bf2_editor_linkcheck    the strict companion link: its unresolved list is the editor's work list
@@ -288,15 +289,14 @@ set(BF2_EDITOR_IMGUI_INCLUDES
     "${BF2_IMGUIZMO_ROOT}"
 )
 
-# The compile contract every editor TU shares. _ITERATOR_DEBUG_LEVEL=0 and BF2_PLUGIN_ABI_NATIVE=1
-# are not optional: the editor passes STL objects to and from the client objects, so it must use
-# their exact STL layout (bf2_client_objects sets the same two).
+# The compile contract every editor TU shares. _ITERATOR_DEBUG_LEVEL=0 is not optional: the editor
+# passes STL objects to and from the client objects and its RendDX9.dll, so it must use their exact
+# STL layout (bf2_client_objects sets the same define).
 function(bf2_editor_configure target)
     bf2_configure_cpp_target("${target}")
     bf2_set_image("${target}" 0)
     target_compile_definitions("${target}" PRIVATE
         BF2_IMAGE_EDITOR=1
-        BF2_PLUGIN_ABI_NATIVE=1
         _ITERATOR_DEBUG_LEVEL=0
         NOMINMAX
         WIN32_LEAN_AND_MEAN
@@ -304,6 +304,7 @@ function(bf2_editor_configure target)
     )
     target_include_directories("${target}" PRIVATE "${BF2_EDITOR_ROOT}" "${BF2_ROOT}" ${BF2_EDITOR_IMGUI_INCLUDES}
         ${BF2_PYTHON_INCLUDE_DIRS} "${BF2_EXTERNAL_ROOT}/zlib-1.2.3" "${BF2_EXTERNAL_ROOT}/zlib-1.2.3/contrib/minizip")
+    target_compile_options("${target}" PRIVATE ${BF2_CLIENT_X64_COMPILE_OPTIONS})
     set_target_properties("${target}" PROPERTIES FOLDER "BF2Editor")
 endfunction()
 
@@ -315,10 +316,10 @@ bf2_configure_cpp_target(bf2_editor_shared_objects)
 bf2_set_image(bf2_editor_shared_objects 0)
 bf2_set_platform_compat(bf2_editor_shared_objects)
 target_compile_definitions(bf2_editor_shared_objects PRIVATE
-    BF2_PLUGIN_ABI_NATIVE=1
     _ITERATOR_DEBUG_LEVEL=0
     BF2_IMAGE_EDITOR=1
 )
+target_compile_options(bf2_editor_shared_objects PRIVATE ${BF2_CLIENT_X64_COMPILE_OPTIONS})
 target_include_directories(bf2_editor_shared_objects PRIVATE
     ${BF2_PYTHON_INCLUDE_DIRS}
     "${BF2_EXTERNAL_ROOT}/zlib-1.2.3"
@@ -350,19 +351,10 @@ function(bf2_editor_output target)
     )
 endfunction()
 
-# The renderer's VC7.1 string, for TerrainLayerRecords' by-value calls into the native RendDX9.dll: under the native
-# plugin ABI it allocates from the CRT heap both /MD images share. Outside the editor's tree, so not in its source group.
-set(bf2_editor_abi_sources
-    "${BF2_EDITOR_ROOT}/../../RendDX9Abi/Vc71String.cpp"
-    "${BF2_EDITOR_ROOT}/../../RendDX9Abi/Msvcr71Heap.cpp"
-)
-set_source_files_properties(${bf2_editor_abi_sources} PROPERTIES COMPILE_DEFINITIONS "BF2_PLUGIN_ABI_NATIVE=1")
-
 add_library(bf2_editor_objects OBJECT EXCLUDE_FROM_ALL
     ${bf2_editor_framework_sources}
     ${bf2_editor_engine_framework_sources}
     ${bf2_editor_app_sources}
-    ${bf2_editor_abi_sources}
 )
 bf2_editor_configure(bf2_editor_objects)
 source_group(TREE "${BF2_EDITOR_ROOT}" PREFIX "BF2Editor" FILES
@@ -384,6 +376,7 @@ set(bf2_editor_link_objects
     $<TARGET_OBJECTS:bf2_gamespy_sb_objects>
     $<TARGET_OBJECTS:bf2_gamespy_gp_objects>
     $<TARGET_OBJECTS:bf2_gamespy_cdkeyc_objects>
+    $<TARGET_OBJECTS:bf2_gamespy_voice_objects>    # the client objects' voice client (gv*, Speex)
 )
 # The system imports bf2_client links (the client objects need them).
 set(bf2_editor_system_libs
@@ -398,19 +391,32 @@ function(bf2_editor_link_common target)
         target_link_libraries("${target}" PRIVATE "${BF2_DICE_PY_LIB}")
     endif()
     target_link_libraries("${target}" PRIVATE ${bf2_editor_system_libs})
-    add_dependencies("${target}" bf2_novint_imports)
-    target_link_libraries("${target}" PRIVATE "${BF2_NOVINT_IMPORT_LIB}")
+    # [CHOSEN, not recovered] Complete the shared client engine's voice dependency, as bf2_client
+    # does. VoipServerInternal.cpp references the facade lifecycle and pump. No retail editor
+    # image is available to justify excluding that recovered code.
+    if(BF2_BUILD_X64)
+        if(NOT TARGET bf2_voipserver_client_objects)
+            message(FATAL_ERROR "${target}: missing native x64 client voice objects")
+        endif()
+        target_sources("${target}" PRIVATE $<TARGET_OBJECTS:bf2_voipserver_client_objects>)
+        message(STATUS "${target}: voice provider = bf2_voipserver_client_objects (native x64)")
+    else()
+        if(NOT TARGET bf2_voipserver_client)
+            message(FATAL_ERROR "${target}: missing x86 client voice DLL target")
+        endif()
+        target_link_libraries("${target}" PRIVATE bf2_voipserver_client)
+        message(STATUS "${target}: voice provider = bf2_voipserver_client (x86 import library)")
+    endif()
 endfunction()
 
 # ---- BF2Editor.exe ------------------------------------------------------------------------------
-# /FORCE, like bf2_client: the client object set still has unresolved externals (the strict list
-# below). A /FORCE image proves only the paths it runs.
+# The six CBF2VoipServer facade methods are supplied by the client's voice target.
+# Keep this link strict so any remaining image debt fails visibly; VM validation is required.
 # /ENTRY: see App/EditorMain.cpp - the game's WinMain is linked but never the entry.
 add_executable(bf2_editor EXCLUDE_FROM_ALL ${bf2_editor_link_objects})
 bf2_editor_link_common(bf2_editor)
 set_target_properties(bf2_editor PROPERTIES OUTPUT_NAME BF2Editor)
 target_link_options(bf2_editor PRIVATE
-    /FORCE
     /INCREMENTAL:NO
     /DEBUG
     /SUBSYSTEM:WINDOWS
@@ -419,6 +425,14 @@ target_link_options(bf2_editor PRIVATE
     "/MAP:${BF2_EDITOR_OUTPUT_DIR}/BF2Editor.map"
     /IGNORE:4006,4088,4098
 )
+if(TARGET bf2_voipserver_client)
+    add_custom_command(TARGET bf2_editor POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:bf2_voipserver_client>" "${BF2_EDITOR_OUTPUT_DIR}/BF2VoipServer.dll"
+        COMMENT "Staging the rebuilt client voice server beside BF2Editor.exe"
+        VERBATIM
+    )
+endif()
 if(EXISTS "${BF2_DICE_PY_DLL}")
     add_custom_command(TARGET bf2_editor POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -427,19 +441,10 @@ if(EXISTS "${BF2_DICE_PY_DLL}")
         VERBATIM
     )
 endif()
-# The client objects import NovintHFX.dll; bf2_client stages the original the same way. Reading
-# the game directory is all this does.
-if(EXISTS "${BF2_GAME_DIR}/NovintHFX.dll")
-    add_custom_command(TARGET bf2_editor POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${BF2_GAME_DIR}/NovintHFX.dll" "${BF2_EDITOR_OUTPUT_DIR}/NovintHFX.dll"
-        COMMENT "Staging the original Novint SDK companion beside BF2Editor.exe"
-        VERBATIM
-    )
-endif()
 
 # ---- The editor's own native RendDX9.dll (WP4) ------------------------------------------------------
-# Built by the tree's own script (Code/Build/renddx9.cmd native), REDIRECTED into this build tree
+# Built by the tree's own script (Code/Build/renddx9.cmd native, or x64 in the x64 configuration -
+# BF2_PLUGIN_FLAVOUR from the root CMakeLists.txt), REDIRECTED into this build tree
 # through the script's agent-isolation variables BF2_RENDDX9_OUT / BF2_RENDDX9_BIN, so the shared plugin
 # directories (Code/Build/obj_renddx9_native, bin_renddx9_native) are never rewritten, then staged
 # beside BF2Editor.exe. LoadLibrary searches the exe's directory first; a working directory holding the
@@ -460,29 +465,29 @@ add_custom_target(bf2_editor_renddx9
     COMMAND "${CMAKE_COMMAND}" -E env
             "BF2_RENDDX9_OUT=${BF2_EDITOR_RENDDX9_OUT}" "BF2_RENDDX9_BIN=${BF2_EDITOR_RENDDX9_BIN}"
             "BF2_TEXTUREATLAS_OUT=${BF2_EDITOR_ATLAS_OUT}" "BF2_TEXTUREATLAS_BIN=${BF2_EDITOR_ATLAS_BIN}"
-            cmd.exe /d /c "${BF2_EDITOR_RENDDX9_SCRIPT}"
+            "BF2_FRONTIER_DEFAULT_CONTINUE=$<IF:$<BOOL:${BF2_FRONTIER_DEFAULT_CONTINUE}>,ON,OFF>"
+            cmd.exe /d /c "${BF2_EDITOR_RENDDX9_SCRIPT}" ${BF2_PLUGIN_FLAVOUR}
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${BF2_EDITOR_OUTPUT_DIR}"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${BF2_EDITOR_RENDDX9_DIR}/bin/RendDX9.dll" "${BF2_EDITOR_OUTPUT_DIR}/RendDX9.dll"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${BF2_EDITOR_RENDDX9_DIR}/atlas_bin/TextureAtlasBuilder.dll" "${BF2_EDITOR_OUTPUT_DIR}/TextureAtlasBuilder.dll"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/Code/Build"
-    COMMENT "Building the editor's native RendDX9.dll and TextureAtlasBuilder.dll (into ${BF2_EDITOR_RENDDX9_DIR})"
+    COMMENT "Building the editor's ${BF2_PLUGIN_FLAVOUR} RendDX9.dll and TextureAtlasBuilder.dll (into ${BF2_EDITOR_RENDDX9_DIR})"
     VERBATIM
 )
 set_property(TARGET bf2_editor_renddx9 PROPERTY FOLDER "BF2Editor")
 add_dependencies(bf2_editor bf2_editor_renddx9)
 
 # ---- The strict companion link --------------------------------------------------------------------
-# EXPECTED TO FAIL until the client object set links clean; the LNK2019/LNK2001 names are the
-# editor's whole-image work list (shared engine debt included). /FORCE:MULTIPLE tolerates only
-# duplicates, as for bf2_client_linkcheck. Compare its symbol set with bf2_client_linkcheck's before
-# attributing a gap to editor code.
+# Reuse the editor's exact objects and libraries without any /FORCE option.
+# LNK2019/LNK2001 names measure the editor's remaining whole-image link debt;
+# the production editor also links strictly. This manual check stays EXCLUDE_FROM_ALL.
+# It is independent of bf2_editor: requesting the production target never builds this executable.
 add_executable(bf2_editor_linkcheck EXCLUDE_FROM_ALL ${bf2_editor_link_objects})
 bf2_editor_link_common(bf2_editor_linkcheck)
 set_target_properties(bf2_editor_linkcheck PROPERTIES OUTPUT_NAME BF2Editor_linkcheck)
 target_link_options(bf2_editor_linkcheck PRIVATE
-    /FORCE:MULTIPLE
     /INCREMENTAL:NO
     /DEBUG
     /SUBSYSTEM:WINDOWS

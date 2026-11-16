@@ -15,6 +15,7 @@
 #include "../Core/SystemInfo.h"
 #include "../External/GameSpy/md5.h"
 #include "../IO/Network/NetworkLayer/Socket/UDPSocket.h"
+#include "../Platform/MsvcRand.h"  // [CHOSEN, not recovered] the client CRT's rand (MSVCR71)
 
 #if defined(_WIN32)
 #  include <winsock2.h>
@@ -23,16 +24,6 @@
 #endif
 
 namespace BF2VoipServer {
-
-// [TEMP] [CHOSEN, not recovered] [RETIRE-WHEN: voip-instance] Named stop for a body that is not yet
-// recovered. Remove each call when its real body lands (the transport, authentication or routing
-// phase). Prefer stderr here because BF2Log may not be up on these paths.
-#define BF2_VOIP_INSTANCE_FRONTIER(name)                                                 \
-    do {                                                                                 \
-        std::fprintf(stderr, "[FRONTIER] BF2VoipServer::%s reached\n", name);            \
-        std::fflush(stderr);                                                             \
-        std::abort();                                                                    \
-    } while (0)
 
 CBF2VoipServerInstance::CBF2VoipServerInstance()
 {
@@ -623,12 +614,12 @@ VOIP::VRESULT CBF2VoipServerInstance::InitChallengeString()
     {
         const char* text = dateTime.c_str();
         int length = static_cast<int>(dateTime.size());
-        std::srand(text[length - 5] * text[length - 4] * text[length - 2] * text[length - 1]);
+        bf2crt::srand(text[length - 5] * text[length - 4] * text[length - 2] * text[length - 1]);
     }
 
     for (int i = 0; i < 10; ++i)
     {
-        int random = std::rand();
+        int random = bf2crt::rand();
         int count = m_field09B8.m_count;
         if (count <= 0x63)
         {
@@ -1003,10 +994,17 @@ VOIP::VRESULT CBF2VoipServerInstance::HandlePacketBF2FullRoutingDataSet(const ch
     return VOIP::VRESULT_SUCCESS;
 }
 
+// ELF 0x84EFAB0. The payload is the full 65 x 25-byte name table; it starts the routing dump on first
+// use and replaces the names. Any other length is VRESULT_INVALID_STATE (-4).
 VOIP::VRESULT CBF2VoipServerInstance::HandlePacketDebugRoutingData(const char* data, int length)
 {
-    (void)data; (void)length;
-    BF2_VOIP_INSTANCE_FRONTIER("CBF2VoipServerInstance::HandlePacketDebugRoutingData");
+    if (length != static_cast<int>(sizeof(m_playerNames)))      // 0x659
+        return VOIP::VRESULT_INVALID_STATE;
+    if (!m_debugRouting.Enabled())
+        m_debugRouting.Start();
+    if (data)
+        std::memcpy(m_playerNames, data, sizeof(m_playerNames));
+    return VOIP::VRESULT_SUCCESS;
 }
 
 } // namespace BF2VoipServer

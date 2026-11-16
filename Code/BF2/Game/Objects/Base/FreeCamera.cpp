@@ -521,6 +521,9 @@ void FreeCamera::handlePlayerInput(IPlayer* player, const io::PlayerInput& input
     if (object_detail::LayoutAccess::parent(this))                     // +0x28
         return;
 
+    // BF2.exe 0x63EC73..0x63ED26 (ledger N2): the local player's free camera zeroes the Falcon's force
+    // effects; none exists without the archived device (Code/Archive/NovintFalcon).
+
     IBase* gameServer = static_cast<IBase*>(game->queryInterface(IID_IGameServer));
 
     bool toggleRequested = false;

@@ -229,7 +229,7 @@ void WeaponBasedRecoilComp::updateComponent(float, unsigned int)
 // , 493 B.  Ordering is significant: wake/apply force and the
 // optional explosion precede the saved-relative-position snapshot and both timer writes; the PCO
 // walk and camera impulse come last.
-void WeaponBasedRecoilComp::postFire(WeaponFireEvent&)
+void WeaponBasedRecoilComp::postFire(WeaponFireEvent& event)
 {
     IObject* const root = getRootParent(m_initObject);
     const float force = m_weaponTemplate->getRecoilForce();
@@ -263,6 +263,9 @@ void WeaponBasedRecoilComp::postFire(WeaponFireEvent&)
         m_savedRelativePosition.y = transform.m[13];
         m_savedRelativePosition.z = transform.m[14];
     }
+
+    // BF2.exe 0x60A077..0x60A4FE (ledger N2 17b) gives the local occupant's Falcon a "RecoilPunch" here,
+    // between the snapshot and the timers; it needs a device (archived, Code/Archive/NovintFalcon).
 
     const unsigned int tick = static_cast<unsigned int>(WorldPref::getTickCount());
     const int recoilTicks = static_cast<int>(

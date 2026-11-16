@@ -7,7 +7,11 @@
 #include "Event.h"
 #include "Action.h"
 #include "Function.h"
+#include "Tree.h"
+#include <cstdio>
+#include <cstdlib>
 namespace dice { namespace meme {
+TypeDescriptor* getTreeClassType() { return Tree::getClassType(); }   // 0x83D010 (Tree.cpp)
 TypeDescriptor* getEventClassType() { return Event::getClassType(); }
 TypeDescriptor* getActionClassType() { return Action::getClassType(); }
 TypeDescriptor* getFunctionClassType() { return Function::getClassType(); }
@@ -24,8 +28,8 @@ bool Stream::streamInt(int*, const char*) { return isPassive(); }
 bool Stream::streamString(char**, const char*) { return isPassive(); }
 bool Stream::streamWideString(wchar_t**, const char*) { return isPassive(); }
 bool Stream::streamCharacter(wchar_t*, const char*) { return isPassive(); }
-bool Stream::streamTexture(System*, int*, const char*) { return isPassive(); }
-bool Stream::streamFont(System*, int*, const char*) { return isPassive(); }
+bool Stream::streamTexture(System*, TextureHandle*, const char*) { return isPassive(); }
+bool Stream::streamFont(System*, FontHandle*, const char*) { return isPassive(); }
 bool Stream::streamSound(System*, int*, const char*) { return isPassive(); }
 bool Stream::streamCollection(System*, ObjectCollection*, const char*) { return isPassive(); }
 bool Stream::streamEnum(int*, EnumNext, EnumName, const char*) { return isPassive(); }
@@ -94,7 +98,9 @@ bool createObject(System* system, Object*& value, TypeDescriptor* type)
     deletion.streamObject(system, value, "Object", nullptr); // ignored result
     return false;
 }
+#if defined(_M_IX86)
 static_assert(sizeof(Stream) == 4, "BFMeme stream prefix");
 static_assert(sizeof(DeletionStream) == 8, "BFMeme deletion visitor");
+#endif
 } }
 #endif

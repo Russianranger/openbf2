@@ -15,9 +15,11 @@
 #include "../External/BFMeme/TypeDescriptor.h"
 #include "../IO/File/FileManager.h"
 #include "Font.h"
+#include "HudWidescreen.h"
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include "../Core/MsvcCrtCompat.h"   // [CHOSEN, not recovered] _splitpath outside MSVC
 
 namespace dice { namespace hfe {
 extern ClassManager* classManager;
@@ -44,8 +46,10 @@ private:
     static int instanceCount;
 };
 int Ref2SystemTypeDescriptor::instanceCount = 0;
+#if defined(_M_IX86)
 static_assert(sizeof(Ref2SystemTypeDescriptor) == 16,
               "Ref2System metadata stores its counter separately");
+#endif
 
 // A20F78 is a plain dword whose bit zero is set before construction. Retail has no lock and no
 // exception rollback here; avoid the compiler's C++11 thread-safe function-static guard.
@@ -103,6 +107,7 @@ Ref2System::Ref2System(float width, float height)
 // not its Font* payloads. Fonts/textures/renderView belong to separate close.
 Ref2System::~Ref2System()
 {
+    hud::widescreen::detach(this);
     if (m_field684)
         m_field684->release();
 }
@@ -133,6 +138,7 @@ bool Ref2System::init() // 7AD030, retain the base result without early-out
 }
 bool Ref2System::close()
 {
+    hud::widescreen::detach(this);
     const bool result = System::close();
     m_renderView->release();
     if (m_textureList) m_textureList->release(); // Only the head; no chain walk here.
@@ -164,8 +170,21 @@ void Ref2System::sizeChanged(const float* oldSize, const float* newSize)
         m_renderHeight = newSize[1];
     }
 }
+void Ref2System::refreshHudLayout()
+{
+    // [CHOSEN, not recovered] Issue #33: sample the active pixel viewport before HUD input/layout.
+    if (hud::widescreen::enabled(this)) {
+        dx9rend::IRenderView* view = static_cast<dx9rend::IRenderer*>(m_renderer)->getRenderView();
+        if (view) {
+            const float* viewport = view->getViewport();
+            hud::widescreen::updateViewport(this, viewport[2], viewport[3]);
+        }
+        static_cast<dx9rend::IRenderView*>(m_renderView)->setOrthoWidth(hud::widescreen::width(this));
+    }
+}
 bool Ref2System::update(float delta) // only strictly greater than one resets
 {
+    refreshHudLayout();
     if (delta > 1.0f) delta = 0.0f;
     return System::update(delta);
 }
@@ -248,7 +267,7 @@ meme::OStream* Ref2System::createOutputStream(const char* name)
     return storage ? new(storage) meme::FileOStream(path.c_str()) : nullptr;
 }
 
-bool Ref2System::drawCharacter(int character, int handle, meme::Quad* quad)
+bool Ref2System::drawCharacter(int character, meme::FontHandle handle, meme::Quad* quad)
 {
     Font* font = reinterpret_cast<Font*>(handle);
     if (!font) {
@@ -257,31 +276,31 @@ bool Ref2System::drawCharacter(int character, int handle, meme::Quad* quad)
     }
     return font->drawCharacter(character, quad);
 }
-bool Ref2System::getGlyphMetrics(int character, int handle, meme::GlyphMetrics* out)
+bool Ref2System::getGlyphMetrics(int character, meme::FontHandle handle, meme::GlyphMetrics* out)
 {
     Font* font = reinterpret_cast<Font*>(handle);
     if (!font) font = m_fonts.begin()->second; // Shipped missing empty-map guard.
     return font->getGlyphMetrics(character, out);
 }
-float Ref2System::getKerning(int previous, int current, int handle)
+float Ref2System::getKerning(int previous, int current, meme::FontHandle handle)
 {
     Font* font = reinterpret_cast<Font*>(handle);
     if (!font) font = m_fonts.begin()->second;
     return font->getKerning(previous, current);
 }
-float Ref2System::getFontHeight(int handle)
+float Ref2System::getFontHeight(meme::FontHandle handle)
 {
     Font* font = reinterpret_cast<Font*>(handle);
     if (!font) font = m_fonts.begin()->second;
     return font->getHeight();
 }
-const char* Ref2System::getFontName(int handle)
+const char* Ref2System::getFontName(meme::FontHandle handle)
 { return handle ? reinterpret_cast<Font*>(handle)->getName() : nullptr; }
 
-int Ref2System::loadFont(const char* name)
+meme::FontHandle Ref2System::loadFont(const char* name)
 {
     const auto own = m_fonts.find(std::string(name));
-    if (own != m_fonts.end()) return reinterpret_cast<int>(own->second);
+    if (own != m_fonts.end()) return reinterpret_cast<meme::FontHandle>(own->second);
     const auto shared = sharedFonts.find(std::string(name));
     Font* font;
     if (shared != sharedFonts.end()) {
@@ -303,10 +322,10 @@ int Ref2System::loadFont(const char* name)
         sharedFonts.insert(std::make_pair(std::string(name), font));
     }
     ++font->referenceCount();
-    return reinterpret_cast<int>(font);
+    return reinterpret_cast<meme::FontHandle>(font);
 }
 
-bool Ref2System::drawTexture(int texture, meme::Quad* request)
+bool Ref2System::drawTexture(meme::TextureHandle texture, meme::Quad* request)
 {
     if (texture) {
         geom::IMemeTexture* object = reinterpret_cast<geom::IMemeTexture*>(texture);
@@ -318,7 +337,7 @@ bool Ref2System::drawTexture(int texture, meme::Quad* request)
     }
     return m_blankTexture->drawOther(nullptr, request);
 }
-int Ref2System::loadTexture(const char* name, bool menuPath)
+meme::TextureHandle Ref2System::loadTexture(const char* name, bool menuPath)
 {
     geom::IMemeTexture* texture = m_textureList;
     while (texture) {
@@ -332,9 +351,9 @@ int Ref2System::loadTexture(const char* name, bool menuPath)
         texture->setUserObject(m_textureList);
         m_textureList = texture;
     }
-    return reinterpret_cast<int>(texture);
+    return reinterpret_cast<meme::TextureHandle>(texture);
 }
-void Ref2System::releaseTexture(int handle)
+void Ref2System::releaseTexture(meme::TextureHandle handle)
 {
     if (!handle) return;
     geom::IMemeTexture* texture = reinterpret_cast<geom::IMemeTexture*>(handle);
@@ -351,26 +370,26 @@ void Ref2System::releaseTexture(int handle)
     texture->setUserObject(nullptr);
     texture->release();
 }
-const char* Ref2System::getTextureName(int handle)
+const char* Ref2System::getTextureName(meme::TextureHandle handle)
 {
     return handle ? reinterpret_cast<geom::IMemeTexture*>(handle)->getName() : nullptr;
 }
-float Ref2System::getTextureWidth(int handle) // 7AD330, signed integer conversion
+float Ref2System::getTextureWidth(meme::TextureHandle handle) // 7AD330, signed integer conversion
 {
     return handle ? static_cast<float>(reinterpret_cast<geom::IMemeTexture*>(handle)->getPixelWidth()) : 0.0f;
 }
-float Ref2System::getTextureHeight(int handle)
+float Ref2System::getTextureHeight(meme::TextureHandle handle)
 {
     return handle ? static_cast<float>(reinterpret_cast<geom::IMemeTexture*>(handle)->getPixelHeight()) : 0.0f;
 }
 
-// repeated object reads/calls and fixed 800x600 size are intentional.
+// Repeated retail calls retained; issue #33 optionally widens the 800x600 projection.
 void Ref2System::prepareRenderView()
 {
     static_cast<dx9rend::IRenderView*>(m_renderView)->setProjectionMode(1);
     static_cast<dx9rend::IRenderView*>(m_renderView)->setNearPlane(0.01f);
     static_cast<dx9rend::IRenderView*>(m_renderView)->setFarPlane(1.0f);
-    static_cast<dx9rend::IRenderView*>(m_renderView)->setOrthoWidth(800.0f);
+    static_cast<dx9rend::IRenderView*>(m_renderView)->setOrthoWidth(hud::widescreen::width(this));
     static_cast<dx9rend::IRenderView*>(m_renderView)->setOrthoHeight(600.0f);
     m_previousRenderView = static_cast<dx9rend::IRenderer*>(m_renderer)->getRenderView();
 }
@@ -388,6 +407,7 @@ void Ref2System::prepareViewMatrix()
 
 void Ref2System::beginPaint()
 {
+    refreshHudLayout();
     prepareRenderView();
     prepareViewMatrix();
     static_cast<dx9rend::IRenderer*>(m_renderer)->setRenderView(m_renderView);

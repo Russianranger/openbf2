@@ -4,6 +4,9 @@
 
 #include "GameLogic.h"
 #include "../Main/Game.h"        // isDedicated - loadCallback's client/server split
+#if !DEDICATED
+#include "../VoipClient/BF2VoipClient.h"   // bf2VoipClient (ds:0x9A4DA0)
+#endif
 #include "GameLogicCollision.h"                        // doImpact's exact static forwarding target
 #include "GameLogicExplosion.h"                        // common explosion presentation forwarder
 #include "../Objects/ObjectLayoutAccess.h"           // heal / replenishAmmo walk +0x3C / +0x28
@@ -994,7 +997,7 @@ void GameLogic::removeStrategicObject(world::IObject* object)
 // future-state arm. PE uses the single-precision reciprocal of 30; ELF divides by 30.
 float GameLogic::getTimeToNextStateChange()
 {
-    if (m_nextStateChangeAtTick > WorldPref::getTickCount())
+    if (m_nextStateChangeAtTick > static_cast<unsigned int>(WorldPref::getTickCount()))
     {
         const unsigned int ticks = m_nextStateChangeAtTick - WorldPref::getTickCount();
 #if defined(_WIN32)
@@ -1231,9 +1234,9 @@ void GameLogic::setFogStartEndAndBase(const Vec4& value)
     IBase* const framework = classManager->getSingleton("PostProductionFrameWork");
     if (framework)
     {
-        typedef void (__fastcall* SetStateVec4Fn)(void* self, void* edx, const Vec4* value);
+        typedef void (__thiscall* SetStateVec4Fn)(void* self, const Vec4* value);
         void** const vtbl = *reinterpret_cast<void***>(framework);
-        reinterpret_cast<SetStateVec4Fn>(vtbl[0x24 / sizeof(void*)])(framework, 0, &value);
+        reinterpret_cast<SetStateVec4Fn>(vtbl[0x24 / 4])(framework, &value);
     }
 }
 
@@ -2229,6 +2232,11 @@ GameLogic::~GameLogic()
     m_voipQuality         = 3;                                          // +0x180
     m_voipEnabled         = false;                                      // +0x170
     m_isVoipClientRunning = false;                                      // +0x17C
+#if !DEDICATED
+    // BF2.exe 0x4F629E..0x4F62B3: the client also shuts its voice session down here.
+    if (!isDedicated() && bf2VoipClient)
+        bf2VoipClient->shutdown();                                      // +0x68
+#endif
 
     if (world::supplyDropManager)                                       // ds:0x8AADAAC
         world::supplyDropManager->reset();
@@ -3035,6 +3043,14 @@ void GameLogic::handleExplosion(Vec3 position, float radius, int material, float
                                                canTK, includeSource);
 }
 
+// BF2.exe 0x4ED60B..0x4ED6C2 (client): every return after the kill latch passes here. Retail's client
+// zeroes the Falcon's force effects on the local human player's death; none exists without the archived
+// device (Code/Archive/NovintFalcon), so, as in the dedicated image (ELF), this only returns.
+static bool finishKillPlayer(world::IPlayer*)
+{
+    return true;
+}
+
 // Marks a player dead, publishes death events, dismounts vehicles and updates the death camera.
 // Returns false only for a null player. Vehicle exit repeats until the free camera is reached.
 // Ladder/zipline parents must expose a player-control object; required camera and vehicle
@@ -3122,7 +3138,7 @@ bool GameLogic::killPlayer(world::IPlayer* player, bool a4, bool a5)
 
     const int status = m_gameStatus;
     if (status == 2 || status == 5)
-        return true;
+        return finishKillPlayer(player);
 
     // killer credit - the armor walk starts from the post-loop vehicle
     world::IArmorGLComp* armor = 0;
@@ -3146,14 +3162,14 @@ bool GameLogic::killPlayer(world::IPlayer* player, bool a4, bool a5)
 
     world::IObject* const soldier = player->getDefaultVehicle();               // vt +0xA4
     if (!soldier)
-        return true;
+        return finishKillPlayer(player);
     if (world::object_detail::LayoutAccess::objectTemplate(soldier)->getClassID()
             == world::CID_SoldierTemplate)
     {
         if (!armor)
-            return true;
+            return finishKillPlayer(player);
         if (armor->isDestroyed())                                              // +0x54
-            return true;
+            return finishKillPlayer(player);
 
         Vec3 up;   up.x = 0.0f;   up.y = 1.0f;   up.z = 0.0f;
         Vec3 zero; zero.x = 0.0f; zero.y = 0.0f; zero.z = 0.0f;
@@ -3168,7 +3184,7 @@ bool GameLogic::killPlayer(world::IPlayer* player, bool a4, bool a5)
                 armor->fullDestroy();                                          // +0x100
         }
     }
-    return true;
+    return finishKillPlayer(player);
 }
 
 // Base defaults. Keep declared return types until callers or both images establish
@@ -3182,7 +3198,19 @@ bool GameLogic::giveDamage(world::IObject*, float, world::IPlayer*,
 bool GameLogic::reSpawnPlayer(world::IPlayer*)              { return false; }            // xor eax,eax
 bool GameLogic::selectSpawnGroup(world::IPlayer*, int)      { return false; }            // xor eax,eax
 bool GameLogic::selectTeam(world::IPlayer*, int)            { return false; }            // xor eax,eax
-void GameLogic::startupVoipClient()                         {}
+// BF2.exe 0x4EC300 (client): starts the voice session the server announced, once. The dedicated
+// image's body is empty (ELF), as is a dedicated run of the client image (isDedicated, 0x440510).
+// Retail answers a bool nobody reads; the interface keeps the void slot.
+void GameLogic::startupVoipClient()
+{
+#if !DEDICATED
+    if (isDedicated() || m_isVoipClientRunning || !m_voipEnabled || !bf2VoipClient)
+        return;
+    if (bf2VoipClient->startSession(m_voipServerAddress, m_voipServerPort, m_voipBFClientPort,
+                                    m_voipQuality, true))                       // +0x2C
+        m_isVoipClientRunning = true;
+#endif
+}
 
 // Forwards all impact arguments to GameLogicCollision. Dedicated images retain
 // its empty effect implementation. The final flag skips the underwater test.

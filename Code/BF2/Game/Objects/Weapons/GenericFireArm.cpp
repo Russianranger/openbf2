@@ -4,6 +4,7 @@
 // [RETIRE-WHEN: unrecovered-factories-registered] Register remaining factories only once their required bodies exist.
 
 #include "GenericFireArm.h"
+#include "../GeometryPartAccess.h"   // named geometry operations (non-MSVC)
 #include "../Game/TriggerManager.h"
 #include "FireComponents/FireComp.h"
 #include "AmmoComponents/AmmoComp.h"           // IWeaponAmmoComp - the typed ammo delegates
@@ -54,14 +55,11 @@
 #include <climits>
 #include <vector>
 
+#include "../../../AI/AIInterface/BFKnowledge/BFCollisionHandler.h"
+#include "../../../AI/AIDLL/AI/Main/CommonSingletonServer.h"
+
 namespace dice {
 namespace hfe {
-
-namespace ai {
-// This singleton is null in the production no-bot server.  Its concrete IBFCollisionHandler
-// interface is aidll-owned and intentionally not fabricated in the engine reconstruction.
-extern IBase* g_bfCollisionHandler;
-}
 
 namespace world {
 
@@ -69,15 +67,6 @@ namespace world {
 extern IBase* heightmapCluster;
 
 namespace {
-
-// [TEMP] [CHOSEN, not recovered] - the agents.md frontier stop: name the method on stderr,
-// flush, and never return. It never fabricates a default and lets execution continue.
-[[noreturn]] void gfaFrontier(const char* method)
-{
-    std::fprintf(stderr, "[FRONTIER] dice::hfe::world::GenericFireArm::%s reached\n", method);
-    std::fflush(stderr);
-    std::abort();
-}
 
 const float kTicksPerSecond   = 30.0f;   // flt_888B174 - the fixed timestep
 const float kRedeployInterval =  2.0f;   // flt_888FFE4 - enableItem's deploy retry gap, in seconds
@@ -428,14 +417,18 @@ void GenericFireArm::updateGeometry()
         // / client PE 0x5E0610: suppress the original mesh while an
         // alternate display object supplies it. Both ABIs call geometry +0x50;
         // this is the whole-object transform, not the adjacent per-part slot.
-#if defined(_MSC_VER) && defined(_M_IX86)
+#if defined(_MSC_VER)
+#if defined(_M_IX86)
         typedef void (__thiscall* SetTransformation)(void*, const Mat4&);
 #else
         typedef void (*SetTransformation)(void*, const Mat4&);
 #endif
         reinterpret_cast<SetTransformation>(
-            (*static_cast<void***>(m_geometry))[0x50 / sizeof(void*)])(
+            (*static_cast<void***>(m_geometry))[0x50 / 4])(
                 m_geometry, Mat4::getZero());
+#else
+        geometry_part::setGeometryTransform(m_geometry, &Mat4::getZero());       // PE +0x50
+#endif
     }
     else
     {
@@ -1514,12 +1507,22 @@ void GenericFireArm::postFire(FireState requestedState,
                 {
                     if (m_recoilComp)
                         m_recoilComp->postFire(event);
+                    // BF2.exe 0x5E2A98..0x5E2CDA (ledger N2 17b): without a recoil component, retail
+                    // gives the local player's Falcon a "RecoilPunch" (kits, wrench); it needs a
+                    // device (archived, Code/Archive/NovintFalcon).
                     if (m_targetComp)
                         m_targetComp->postFire(event);
                     if (m_zoomComp)
                         m_zoomComp->postFire(event);
-                    if (ai::g_bfCollisionHandler && projectileObject)
-                        gfaFrontier("postFire (AIDLL IBFCollisionHandler fire report)");
+                    // ELF 0x8251867: every real round is reported to the AI collision handler
+                    // (+0x18). The IProjectileObject query is repeated, as compiled.
+                    ai::IBFCollisionHandler* const collision = static_cast<ai::IBFCollisionHandler*>(
+                        ai::CommonSingletonServer::m_iBFCollisionHandler);
+                    if (collision && projectileObject)
+                        collision->handleProjectileFire(
+                            static_cast<IProjectileObject*>(
+                                projectileObject->queryInterface(IID_IProjectileObject)),
+                            projectileObject);
                 }
             }
 

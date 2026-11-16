@@ -23,13 +23,16 @@ rem            shared RendDX9Abi kit, SwiffPlayerAbi (initDll/deinitDll + memory
 rem            and the wrapper (module, factory, the 1120-byte SwiffPlayer with a
 rem            shape-complete 37-slot vtable). Links to SwiffPlayer.dll.
 rem
-rem   usage:  swiffplayer.cmd [native]   rebuilt host ABI (/MD, no Memory.dll)
+rem   usage:  swiffplayer.cmd [native]   rebuilt host ABI (/MD, no Memory.dll), x86
+rem           swiffplayer.cmd x64        the native x64 client's SwiffPlayer.dll
 rem   BF2_SWIFFPLAYER_OUT and BF2_SWIFFPLAYER_BIN override the output paths.
 rem [CHOSEN, not recovered] Native-only builds: https://github.com/B2BF/OpenBF2/issues/7
 rem ===========================================================================
 if not "%~2"=="" goto :usage
-if not "%~1"=="" if /i not "%~1"=="native" goto :usage
-call "%~dp0vsdevcmd.cmd" x86
+set "ARCH=x86"
+if /i "%~1"=="x64" set "ARCH=x64"
+if not "%~1"=="" if /i not "%~1"=="native" if /i not "%~1"=="x64" goto :usage
+call "%~dp0vsdevcmd.cmd" %ARCH%
 if errorlevel 1 exit /b 1
 
 for %%I in ("%~dp0..") do set CODE=%%~fI
@@ -40,6 +43,8 @@ set EXT=%CODE%\BF2\External
 set SWF=%CODE%\BF2\External\gameswf\SwiffPlayer
 set OUT=%~dp0obj_swiffplayer_native
 set BIN=%~dp0bin_swiffplayer_native
+if "%ARCH%"=="x64" set OUT=%~dp0obj_swiffplayer_x64
+if "%ARCH%"=="x64" set BIN=%~dp0bin_swiffplayer_x64
 set CRT=/MD
 set PLUGIN_ABI=/DBF2_PLUGIN_ABI_NATIVE=1 /D_ITERATOR_DEBUG_LEVEL=0
 rem Preserve agent/CI output isolation.
@@ -69,6 +74,12 @@ set FLAGS=/nologo /c %CRT% /std:c++14 /permissive /EHsc /W3 /FS /Zi ^
  /I "%EXT%" /I "%EXT%\gameswf" ^
  /DBF2_IMAGE_SWIFFPLAYER %PLUGIN_ABI% /DDEDICATED=0 /FI"%BF2%\Core\BuildConfig.h" /DWIN32 /D_WINDOWS /DNDEBUG /D_CRT_SECURE_NO_WARNINGS /D_CRT_NONSTDC_NO_DEPRECATE ^
  /wd4100 /wd4127 /wd4244 /wd4267 /wd4291 /wd4305 /wd4996 /Fd"%OUT%\SwiffPlayer.pdb"
+rem [CHOSEN, not recovered] BF2_FRONTIER_DEFAULT_CONTINUE=ON (CMake option of the same name, passed by
+rem the CMake plugin targets; CI release builds set it): Frontier.cpp's trap defaults to continue when
+rem BF2_SWIFFPLAYER_FRONTIER is unset. Anything else keeps the dev default, abort.
+if /i "%BF2_FRONTIER_DEFAULT_CONTINUE%"=="ON" set FLAGS=%FLAGS% /DBF2_FRONTIER_DEFAULT_CONTINUE=1
+rem x64: a pointer truncated into a 32-bit integer is an error, as for the x64 dedicated server.
+if "%ARCH%"=="x64" set FLAGS=%FLAGS% /we4311 /we4312
 
 echo   Native host ABI, CRT=%CRT%
 echo   CODE=%CODE%
@@ -90,18 +101,13 @@ rem ---------------------------------------------------------------------------
 rem STEP 2 - compile. Explicit manifest, numbered objects (flat output dir).
 rem
 rem   the vendored gameswf + base drop (35 TUs, per the two upstream Makefiles - see below)
-rem   the shared RendDX9Abi kit (BfMemory/Msvcr71Heap/Vc71String/DllMain; Frontier.cpp compiled
+rem   the shared RendDX9Abi kit (BfMemory/DllMain; Frontier.cpp compiled
 rem     separately with the SwiffPlayer log defines)
 rem   SwiffPlayerAbi (PluginEntry initDll/deinitDll, SwiffMemory tu_* shim)
 rem   the wrapper (SwiffPlayer.cpp, SwiffPlayerModule.cpp)
 rem
-rem Excluded from the gameswf/base drop:
-rem   base: ogl, tu_file_SDL, demo, test_ogl, component_hackery, postscript, png_helper,
-rem         triangulate_* (no core caller), logger (2006-vintage), dlmalloc.c (tu_malloc rerouted).
-rem   gameswf: morph (superseded by morph2), the 3 render handlers, both sound handlers, the tools.
-rem   gameswf_xmlsocket.cpp: EXCLUDED pending link demand - its whole body is #ifdef HAVE_LIBXML
-rem         (off), so it emits no code; the only compile blocker is an unconditional #include <SDL.h>.
-rem         Re-admit with a [BUILD-FIX] fence only if the link references an XMLSocket symbol.
+rem S4 removed the unused upstream tools, demo/render/sound backends, optional decoders,
+rem MovieClipLoader, TextFormat, XMLSocket and the legacy Timer API.
 rem ---------------------------------------------------------------------------
 echo [2/4] compiling
 set SOURCES=^
@@ -118,7 +124,6 @@ set SOURCES=^
  "%EXT%\base\tu_types.cpp" ^
  "%EXT%\base\utf8.cpp" ^
  "%EXT%\base\utility.cpp" ^
- "%EXT%\base\zlib_adapter.cpp" ^
  "%EXT%\gameswf\gameswf_action.cpp" ^
  "%EXT%\gameswf\gameswf_button.cpp" ^
  "%EXT%\gameswf\gameswf_dlist.cpp" ^
@@ -127,7 +132,6 @@ set SOURCES=^
  "%EXT%\gameswf\gameswf_impl.cpp" ^
  "%EXT%\gameswf\gameswf_log.cpp" ^
  "%EXT%\gameswf\gameswf_morph2.cpp" ^
- "%EXT%\gameswf\gameswf_movie.cpp" ^
  "%EXT%\gameswf\gameswf_render.cpp" ^
  "%EXT%\gameswf\gameswf_shape.cpp" ^
  "%EXT%\gameswf\gameswf_sound.cpp" ^
@@ -136,13 +140,10 @@ set SOURCES=^
  "%EXT%\gameswf\gameswf_styles.cpp" ^
  "%EXT%\gameswf\gameswf_tesselate.cpp" ^
  "%EXT%\gameswf\gameswf_text.cpp" ^
- "%EXT%\gameswf\gameswf_textformat.cpp" ^
  "%EXT%\gameswf\gameswf_timers.cpp" ^
  "%EXT%\gameswf\gameswf_types.cpp" ^
  "%EXT%\gameswf\gameswf_xml.cpp" ^
  "%RD9ABI%\BfMemory.cpp" ^
- "%RD9ABI%\Msvcr71Heap.cpp" ^
- "%RD9ABI%\Vc71String.cpp" ^
  "%RD9ABI%\DllMain.cpp" ^
  "%ABI%\PluginEntry.cpp" ^
  "%ABI%\SwiffMemory.cpp" ^
@@ -165,6 +166,23 @@ for %%F in (%SOURCES%) do (
     )
 )
 
+rem [CHOSEN, not recovered] Owner-approved Expat 1.95.0 substitute, compiled as C.
+rem xmltok_impl.c and xmltok_ns.c are included by xmltok.c, not separate TUs.
+set EXPAT_SOURCES= "%EXT%\expat\xmlparse.c" "%EXT%\expat\xmltok.c" "%EXT%\expat\xmlrole.c"
+if not exist "%OUT%\expat" mkdir "%OUT%\expat"
+if not exist "%OUT%\expat" exit /b 1
+for %%F in (%EXPAT_SOURCES%) do (
+    set /a OBJN+=1
+    cl /nologo /c /TC %CRT% /W3 /Zi /FS /DDEDICATED=0 /FI"%BF2%\Core\BuildConfig.h" /D_CRT_SECURE_NO_WARNINGS /I "%EXT%\expat" /Fd"%OUT%\SwiffPlayer.pdb" /Fo"%OUT%\expat\%%~nF.obj" "%%F" >"%OUT%\cl_%%~nF.log" 2>&1
+    if errorlevel 1 (
+        set /a BAD+=1
+        echo   COMPILE FAIL %%~nxF
+        type "%OUT%\cl_%%~nF.log"
+    ) else (
+        set /a OK+=1
+    )
+)
+
 rem Frontier.cpp - the shared instrument, compiled here with the SwiffPlayer log file, env var and
 rem banner (defaults in the file are RendDX9's, so renddx9.cmd stays byte-for-byte unchanged).
 set /a OBJN+=1
@@ -173,6 +191,8 @@ if errorlevel 1 ( set /a BAD+=1 & echo   COMPILE FAIL Frontier.cpp & type "%OUT%
 
 echo   %OK% compiled, %BAD% failed
 if not "%BAD%"=="0" exit /b 1
+lib /nologo /OUT:"%OUT%\expat.lib" "%OUT%\expat\xmlparse.obj" "%OUT%\expat\xmltok.obj" "%OUT%\expat\xmlrole.obj" >"%OUT%\lib_expat.log" 2>&1
+if errorlevel 1 ( type "%OUT%\lib_expat.log" & exit /b 1 )
 
 rem ---------------------------------------------------------------------------
 rem STEP 3 - link the DLL. /DEF gives the two undecorated exports and pins their ordinals to the
@@ -191,13 +211,16 @@ rem winmm.lib - timeGetTime, used by tu_timer::get_ticks on a LIVE path; the shi
 rem   WINMM for it. dsound/wsock32/advapi32/ole32 are the VoIP/settings surface (Stage 6), not linked
 rem   yet - link demand will name them when that lands.
 echo [3/4] linking
-link /nologo /DLL /MACHINE:X86 /BASE:0x10000000 /DEBUG /OPT:REF /OPT:ICF ^
+rem /BASE:0x10000000 is the shipped x86 image base; the x64 image takes the linker's default.
+set "LINK_BASE=/BASE:0x10000000"
+if "%ARCH%"=="x64" set "LINK_BASE="
+link /nologo /DLL /MACHINE:%ARCH% %LINK_BASE% /DEBUG /OPT:REF /OPT:ICF ^
      /DEF:"%ABI%\SwiffPlayer.def" ^
      /OUT:"%BIN%\SwiffPlayer.dll" ^
      /PDB:"%BIN%\SwiffPlayer.pdb" ^
      /IMPLIB:"%OUT%\SwiffPlayer.lib" ^
      /MAP:"%OUT%\SwiffPlayer.map" ^
-     "%OUT%\*.obj" kernel32.lib user32.lib winmm.lib > "%OUT%\link.log" 2>&1
+     "%OUT%\*.obj" "%OUT%\expat.lib" kernel32.lib user32.lib winmm.lib > "%OUT%\link.log" 2>&1
 if errorlevel 1 (
     echo   LINK FAILED - see "%OUT%\link.log"
     type "%OUT%\link.log"
@@ -257,5 +280,5 @@ echo   NOTE: this is NOT installed anywhere. See docs\building.md before using t
 exit /b 0
 
 :usage
-echo Usage: swiffplayer.cmd [native]
+echo Usage: swiffplayer.cmd [native^|x64]
 exit /b 2

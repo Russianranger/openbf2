@@ -370,6 +370,9 @@ void SBServerListInit(SBServerList *slist, const char *queryForGamename, const c
 #endif
 	
 	slist->state = sl_disconnected;
+#if !defined(_WIN32)
+	slist->lansenderror = 0;
+#endif
 	SBAllocateServerList(slist);
 	SBRefStrHash(slist); //make sure it's initialized
 	strcpy(slist->queryforgamename, queryForGamename);
@@ -440,6 +443,52 @@ static int StringHash(const char *s, int numbuckets)
 
 
 
+// [CHOSEN, not recovered] OpenBF2 local change (LOCAL_CHANGES.md): the master-list connect gives
+// up after this many milliseconds. The SDK's blocking connect waits for the operating system's TCP
+// timeout (75 s on macOS, about 21 s on Windows) when the list server's name resolves to an address
+// that never answers, and the game's menu is frozen for that time.
+#define SB_CONNECT_TIMEOUT 5000
+
+// [CHOSEN, not recovered] OpenBF2 local change: connect with SB_CONNECT_TIMEOUT. Returns 0 when
+// connected; the socket is blocking again afterwards, as after the SDK's connect.
+static int ServerListConnectWithTimeout(SOCKET sock, struct sockaddr_in *saddr)
+{
+	fd_set writeSet;
+	fd_set exceptSet;
+	struct timeval timeout;
+	int error = 0;
+#if defined(_WIN32)
+	int errorLen = (int)sizeof(error);
+#else
+	socklen_t errorLen = (socklen_t)sizeof(error);
+#endif
+	int rcode;
+
+	if (!SetSockBlocking(sock, 0))
+		return connect(sock, (struct sockaddr *)saddr, sizeof(*saddr));
+	rcode = connect(sock, (struct sockaddr *)saddr, sizeof(*saddr));
+	if (gsiSocketIsError(rcode))
+	{
+		error = GOAGetLastError(sock);
+		if (error != WSAEWOULDBLOCK && error != WSAEINPROGRESS)
+			return -1;
+		FD_ZERO(&writeSet);
+		FD_SET(sock, &writeSet);
+		FD_ZERO(&exceptSet);
+		FD_SET(sock, &exceptSet);
+		timeout.tv_sec = SB_CONNECT_TIMEOUT / 1000;
+		timeout.tv_usec = (SB_CONNECT_TIMEOUT % 1000) * 1000;
+		rcode = select(FD_SETSIZE, NULL, &writeSet, &exceptSet, &timeout);
+		if (rcode <= 0 || FD_ISSET(sock, &exceptSet))
+			return -1;	// timed out, select failed, or (Windows) the connect failed
+		error = 0;
+		if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char *)&error, &errorLen) != 0 || error != 0)
+			return -1;	// (POSIX) the connect failed
+	}
+	SetSockBlocking(sock, 1);
+	return 0;
+}
+
 static SBError ServerListConnect(SBServerList *slist)
 {
 	struct   sockaddr_in saddr;
@@ -470,7 +519,8 @@ static SBError ServerListConnect(SBServerList *slist)
 		if (slist->slsocket == INVALID_SOCKET)
 			return sbe_socketerror;
 	}
-	if (connect ( slist->slsocket, (struct sockaddr *) &saddr, sizeof saddr ) != 0)
+	// [CHOSEN, not recovered] OpenBF2 local change: a bounded connect (SB_CONNECT_TIMEOUT).
+	if (ServerListConnectWithTimeout(slist->slsocket, &saddr) != 0)
 	{
 		closesocket(slist->slsocket);
 		slist->slsocket = INVALID_SOCKET;
@@ -692,6 +742,10 @@ SBError SBServerListGetLANList(SBServerList *slist, unsigned short startport, un
 	unsigned short i;
 	unsigned char qr2_echo_request[] = {QR2_MAGIC_1, QR2_MAGIC_2, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00};
 	int qr2requestlen = sizeof(qr2_echo_request) / sizeof(qr2_echo_request[0]);
+#if !defined(_WIN32)
+	int sendFailure = 0;
+	slist->lansenderror = 0;
+#endif
 	if (slist->state != sl_disconnected)
 		SBServerListDisconnect(slist);
 
@@ -726,12 +780,34 @@ SBError SBServerListGetLANList(SBServerList *slist, unsigned short startport, un
 		endport = (unsigned short)(startport + 500);
 	for (i = startport ; i <= endport ; i += 1)
 	{
+#if !defined(_WIN32)
+		int sent;
+#endif
 		saddr.sin_port = htons(i);
+#if !defined(_WIN32)
+		if (queryversion == QVERSION_QR2) //send a QR2 echo request
+			sent = (int)sendto(slist->slsocket, (char*)qr2_echo_request,qr2requestlen,0,(struct sockaddr *)&saddr,sizeof(saddr));
+		else //send a GOA echo request
+			sent = (int)sendto(slist->slsocket, "\\echo\\test",10,0,(struct sockaddr *)&saddr,sizeof(saddr));
+		// [CHOSEN, not recovered] the browse itself is unchanged (a failed send is not an error).
+		// A denied macOS Local Network permission (or a firewall) fails the broadcast sendto and
+		// the LAN list stays silently empty; the first failure is logged once per browse and kept
+		// in lansenderror, from which the menu's ServerBrowser raises a message.
+		if (sent < 0 && sendFailure == 0)
+			sendFailure = errno;
+#else
 		if (queryversion == QVERSION_QR2) //send a QR2 echo request
 			sendto(slist->slsocket, (char*)qr2_echo_request,qr2requestlen,0,(struct sockaddr *)&saddr,sizeof(saddr));
 		else //send a GOA echo request
 			sendto(slist->slsocket, "\\echo\\test",10,0,(struct sockaddr *)&saddr,sizeof(saddr));
+#endif
 	}
+#if !defined(_WIN32)
+	slist->lansenderror = sendFailure;
+	if (sendFailure != 0)
+		fprintf(stderr, "LAN server search: sending the broadcast failed (%s); on macOS allow Local Network "
+			"access for OpenBF2 in System Settings > Privacy & Security > Local Network\n", strerror(sendFailure));
+#endif
 	slist->state = sl_lanbrowse;
 	slist->lanstarttime = current_time();
 	return sbe_noerror;

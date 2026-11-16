@@ -1,10 +1,11 @@
 // General profile settings and server-history storage.
 #ifndef GAME_GENERALSETTINGS_H
 #define GAME_GENERALSETTINGS_H
-#include "../Core/IBase.h"
 #include <string>
 #include <vector>
-#if !DEDICATED
+#include "../Core/IBase.h"
+// The interface is declared in every image (the dedicated AI reaches it through BFGame's menu
+// arm, which no dedicated module can trigger); the implementation is client-only.
 namespace dice { namespace hfe {
 
 // Favourite/history entry. [INFERRED] Field names follow serialized settings.
@@ -116,6 +117,7 @@ public:
     // +164 is the deleting destructor (4B7B20), the one slot still withheld: see ~GeneralSettings.
 };
 
+#if !DEDICATED
 struct GeneralSettingsFixture;
 class GeneralSettings final : public IGeneralSettings {
 public:
@@ -247,6 +249,11 @@ public:
     // LCD display mode setting, also exposed through the movie's VideoSettings namespace.
     bool  getLCDDisplayModes() const override      { return m_lcdDisplayModes; }   //+15C
     void  setLCDDisplayModes(bool value) override  { m_lcdDisplayModes = value; }  //+160
+
+    // [CHOSEN, not recovered] Owner's tutorial option.
+    // Native-only accessors leave the recovered virtual interface unchanged.
+    bool getShowTutorialMessages() const { return m_showTutorialMessages; }
+    void setShowTutorialMessages(bool value) { m_showTutorialMessages = value; }
 private:
     friend struct GeneralSettingsFixture;
     int m_refCount;                               // retail+04
@@ -283,8 +290,10 @@ private:
     int m_toggleFilters;                          //+F4, a bit mask: +10C tests, +110 sets/clears
     bool m_autoReady;                             //+F8
     bool m_lcdDisplayModes;                       //+F9
+    // [CHOSEN, not recovered] Persisted general option; true keeps retail pop-ups.
+    bool m_showTutorialMessages;
 };
 
+#endif // !DEDICATED
 } }
-#endif
 #endif

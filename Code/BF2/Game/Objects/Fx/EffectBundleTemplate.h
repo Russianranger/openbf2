@@ -1,7 +1,7 @@
 // Groups effect emitters and supplies EffectProperties as a secondary base.
 // Client creation constructs an EffectBundle; dedicated creation returns null. Initialization adds a 3D looping Start sound.
 // preCache explicitly calls ObjectTemplate, and child info uses the EffectInfo subclass.
-// RandomDistribution members retain their embedded seed/layout even though sampling uses g_random.
+// RandomDistribution members retain their embedded seed/layout even though sampling uses Rand.
 // Original ELF size is 0x340; unresolved own-field roles remain marked below. Placement is [INFERRED].
 
 #ifndef GAME_OBJECTS_FX_EFFECTBUNDLETEMPLATE_H     // [INFERRED] guard style
@@ -43,7 +43,7 @@ public:
     virtual IObject* createObject() const;                    // dedicated null; client PE 0x642680
     virtual void preCache() const;                            // flags-gated grandparent call
     virtual bool makeScript(io::IStream*);                    // ELF/PE recovered
-    virtual bool makeMemberScript(const TemplateInfo*, io::IStream*);   // dedicated ELF81FC410 / PE5F9250; client frontier
+    virtual bool makeMemberScript(const TemplateInfo*, io::IStream*);   // ELF81FC410 / PE5F9250; client 6416E0
     virtual TemplateInfo* createTemplateInfo(const std::string&);       // news an EffectInfo
 
     virtual void  setEmitFrequencyScaleFactorLowerBound(float);   // the +0x30C store

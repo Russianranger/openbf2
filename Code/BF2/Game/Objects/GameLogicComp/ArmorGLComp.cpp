@@ -26,7 +26,7 @@
 #include "../../IGame.h"                                // game->destroyObject
 #include "../../IGameLogic.h"                           // gameLogic - isServer / getGameStatus / giveDamage
 #include "../../Common/GameEvent.h"                     // revive: ECGameLogic 14 replication
-#include "../Fx/ParticleTemplate.h"                     // g_random - UpdateInWaterStatus' jitter
+#include "../Fx/ParticleTemplate.h"                     // Rand - UpdateInWaterStatus' jitter
 #include "../IObject.h"
 #include "../IStrategicObjectComp.h"           // ResetStrategicObject's component
 #include "../StrategicObjectComp.h"            // ... and the holder it looks up
@@ -85,21 +85,19 @@ typedef void (__thiscall *GeometrySetIntFn)(void*, int);
 const unsigned int kGeometrySetGeomIndexSlot = 0x6C;
 const unsigned int kGeometryGetGeomIndexSlot = 0x70;
 const unsigned int kGeometryGetGeomCountSlot = 0x74;
-#else
-typedef int  (*GeometryGetIntFn)(void*);
-typedef void (*GeometrySetIntFn)(void*, int);
-const unsigned int kGeometrySetGeomIndexSlot = 0x70;
-const unsigned int kGeometryGetGeomIndexSlot = 0x74;
-const unsigned int kGeometryGetGeomCountSlot = 0x78;
 #endif
 
 int geometryGetGeomCount(void* geometry)
 {
     if (!geometry)
         return 0;
+#ifdef _MSC_VER
     void** const vtable = *reinterpret_cast<void***>(geometry);
     return reinterpret_cast<GeometryGetIntFn>(
         vtable[kGeometryGetGeomCountSlot / 4])(geometry);
+#else
+    return geometry_part::getSubgeomCount(geometry);                         // ELF +0x78
+#endif
 }
 
 int geometryGetPartCount(void* geometry)
@@ -113,9 +111,6 @@ int geometryGetPartCount(void* geometry)
 #ifdef _MSC_VER
 const unsigned int kGeometryShowDamageSlot = 0xC0;
 typedef void (__thiscall *GeometryShowDamageFn)(void*, int, int);
-#else
-const unsigned int kGeometryShowDamageSlot = 0xC4;
-typedef void (*GeometryShowDamageFn)(void*, int, int);
 #endif
 
 void geometryInitDamageState(void* geometry)
@@ -133,9 +128,13 @@ void geometryShowDamage(void* geometry, int a, int b)
     if (!geometry)
         return;
 
+#ifdef _MSC_VER
     void** const vtable = *reinterpret_cast<void***>(geometry);
     reinterpret_cast<GeometryShowDamageFn>(
         vtable[kGeometryShowDamageSlot / 4])(geometry, a, b);
+#else
+    geometry_part::updateFlags(geometry, static_cast<unsigned int>(a), static_cast<unsigned int>(b));   // ELF +0xC4
+#endif
 }
 
 void geometrySetPartTransform(void* geometry, const Mat4* transform, int part)
@@ -571,7 +570,7 @@ void ArmorGLComp::UpdateInWaterStatus()
         if (worldTime > *g_armorWaterSafetyCheckTime + m_lastWaterCheckTime)
         {
             timerFired = true;
-            const unsigned int x = g_random.getRaw();                        // two Lehmer steps, inlined in the ELF
+            const unsigned int x = Rand.getRaw();                        // two Lehmer steps, inlined in the ELF
             const float roll = static_cast<float>(((static_cast<int>(x) >> 7) | 1) + 1) * 5.9604645e-08f;
             m_lastWaterCheckTime = worldTime - (roll * 0.30000001f + 0.0f);
         }

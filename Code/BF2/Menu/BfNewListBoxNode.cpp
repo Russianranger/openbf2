@@ -1,4 +1,7 @@
 #include "BfNewListBoxNode.h"
+#if !defined(_MSC_VER) || !defined(_M_IX86)
+#include "../Math/PortableX87.h"
+#endif
 #if !DEDICATED
 #include "BfListBoxData.h"
 #include "DifFontMetadata.h"
@@ -13,6 +16,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+// [CHOSEN, not recovered] SSE2 is used only by the Windows x64 arm; arm64 has no emmintrin.h.
+#if defined(_WIN32) && !defined(_M_IX86)
+#include <emmintrin.h>
+#endif
 namespace dice { namespace hfe { namespace io {
 extern IBase* inputDeviceManager;
 } } }
@@ -21,7 +28,9 @@ namespace {
 // Floors then converts to int with truncating x87 control, preserving NaN and out-of-range results.
 int floorToInt(double value)
 {
+#if defined(_WIN32)
     const double floored = std::floor(value);
+#if defined(_M_IX86)
     unsigned short original, truncating;
     int result;
     __asm {
@@ -35,6 +44,19 @@ int floorToInt(double value)
         fldcw original
     }
     return result;
+#else
+    // cvttsd2si truncates like the chopped fistp, including the 0x80000000 indefinite result.
+    return _mm_cvttsd_si32(_mm_set_sd(floored));
+#endif
+#else
+// [CHOSEN, not recovered] Preserve the S2.1 POSIX numeric arm (docs/macos-port.md).
+    const double floored = std::floor(value);
+    unsigned short original, truncating;
+    int result;
+    // [CHOSEN, not recovered] Preserve x87 truncating int32 with integer indefinite.
+    result = bf2x87::integer<int>(bf2x87::wide(floored));
+    return result;
+#endif
 }
 int floorFloatToInt(float value) { return floorToInt(static_cast<double>(value)); }
 }
@@ -54,7 +76,7 @@ BfNewListBoxNode::BfNewListBoxNode()
       m_field108(false), m_field109(false), m_field128(false)
 {
     for (auto& word : m_field10c) word = 0;
-    for (int& font : m_fonts) font = 0;
+    for (FontHandle& font : m_fonts) font = 0;
 }
 BfNewListBoxNode::~BfNewListBoxNode() {} // list destruction, then Node/Object
 unsigned int BfNewListBoxNode::getObjectSize() { return sizeof(BfNewListBoxNode); }
@@ -122,13 +144,39 @@ bool BfNewListBoxNode::scrollDownOneRow(System*)
     return true;
 }
 
-// [FRONTIER] [TEMP] [CHOSEN, not recovered] Remaining stream and event methods stop on invocation.
-// [RETIRE-WHEN: hud-list-box-frame] Replace after all remaining list-box stream and event operations are implemented and validated.
-bool BfNewListBoxNode::streamProperties(System*, Stream*)
+// Streams the list box's properties after Node's. The deletion visitor runs it when the HUD tree is
+// destroyed. "Font" and "Select action" both stream the +48 word, as shipped; nothing streams +4C.
+// A data object, once streamed, gets this node as its back-pointer.
+bool BfNewListBoxNode::streamProperties(System* system, Stream* stream)
 {
-    std::fprintf(stderr, "[FRONTIER] dice::meme::BfNewListBoxNode::streamProperties reached\n");
-    std::fflush(stderr);
-    std::abort();
+    if (!Node::streamProperties(system, stream)) return false;
+    if (!stream->streamData(system, reinterpret_cast<Data*&>(m_data), "Listbox data",
+                            ListBoxData::getClassType())) return false;
+    if (m_data) m_data->m_node = this;
+    if (!stream->streamFont(system, &m_font048, "Font")) return false;
+    if (!stream->streamAction(system, m_selectAction, "Select action", nullptr)) return false;
+    if (!stream->streamAction(system, m_focusAction, "Focus action", nullptr)) return false;
+    if (!stream->streamSound(system, &m_sound068, "Step sound")) return false;
+    if (!stream->streamSound(system, &m_sound06c, "Select sound")) return false;
+    if (!stream->streamSound(system, &m_sound070, "Failed select sound")) return false;
+    if (!stream->streamFloat(&m_rowHeight, "Row height")) return false;
+    if (!stream->streamBool(&m_selectable, "IsSelectable")) return false;
+    if (!stream->streamBool(&m_border, "Border or not")) return false;
+    if (!stream->streamFloat(&m_background.r, "Background color red")) return false;
+    if (!stream->streamFloat(&m_background.g, "Background color green")) return false;
+    if (!stream->streamFloat(&m_background.b, "Background color blue")) return false;
+    if (!stream->streamFloat(&m_background.a, "Background color alpha")) return false;
+    if (!stream->streamFloat(&m_scrollWidth, "Scrollbar width")) return false;
+    if (!stream->streamFloat(&m_frame.r, "Frame color red")) return false;
+    if (!stream->streamFloat(&m_frame.g, "Frame color green")) return false;
+    if (!stream->streamFloat(&m_frame.b, "Frame color blue")) return false;
+    if (!stream->streamFloat(&m_frame.a, "Frame color alpha")) return false;
+    if (!stream->streamFloat(&m_selection.r, "Select color red")) return false;
+    if (!stream->streamFloat(&m_selection.g, "Select color green")) return false;
+    if (!stream->streamFloat(&m_selection.b, "Select color blue")) return false;
+    if (!stream->streamFloat(&m_selection.a, "Select color alpha")) return false;
+    if (!stream->streamBool(&m_field109, "Show tooltip")) return false;
+    return stream->streamFloat(&m_scrollOffset, "Scrollbar offset from border") != false;
 }
 bool BfNewListBoxNode::updateSelf(System* system, const NodeState* state,
                                   const Rect* bounds, float delta)
@@ -694,13 +742,8 @@ void BfNewListBoxNode::paintSelf(System* system, const NodeState*, const Rect* b
         }
     }
 
-    if (m_data->m_resource) {
-        // [FRONTIER] [TEMP] [CHOSEN, not recovered] Resource finalization requires an unidentified interface prefix.
-        std::fprintf(stderr, "[FRONTIER] dice::meme::BfNewListBoxNode::paintSelf "
-                             "resource-finalization dependency reached\n");
-        std::fflush(stderr);
-        std::abort();
-    }
+    if (m_data->m_resource)                                                      // 7C7906
+        static_cast<IListBoxCellResource*>(m_data->m_resource)->finishPaint();      // +0x2C
 
     if (m_rowCount > m_visibleRows && m_data->m_field021) {
         const float doubledStep = (m_spacing + m_rowHeight) * 2.0f;
@@ -1009,12 +1052,51 @@ bool BfNewListBoxNode::onEvent2(System* system, const Rect* bounds, const NodeSt
     m_field064 = -1;
     return false;
 }
-bool BfNewListBoxNode::onEvent3(System*, const Rect*, const NodeState*, int, int)
+// BF2.exe 0x7C46D0: the double-click release. onEvent2's gate with fewer tests: input code 1 only,
+// no top-inset, pointer-owner, negative-row or empty-list test, and the selectable flag is read
+// after the timing marks, just before the state test. A completed click runs the select action
+// and clears the marks.
+bool BfNewListBoxNode::onEvent3(System* system, const Rect* bounds, const NodeState* state,
+                                int first, int)
 {
-    std::fprintf(stderr, "[FRONTIER] dice::meme::BfNewListBoxNode::onEvent3 reached\n");
-    std::fflush(stderr);
-    std::abort();
+    m_field074 = false;
+    m_field07c = false;
+    m_field080 = -1;
+
+    if (first != 1) return true;
+
+    const float* const pointer = system->getPointerPosition();
+    const float px = pointer[0];
+    const float py = pointer[1];
+
+    const float scrollLeft = (bounds->width + bounds->x) - (m_scrollWidth + m_scrollOffset);
+    if (!(px < scrollLeft - m_scrollOffset)) return true;
+
+    const float bottomInset = (bounds->height + bounds->y) - static_cast<float>(m_bottom);
+    if (!(bottomInset > py)) return true;
+
+    const int row = m_data->m_row;
+    if (row > m_data->getRowCount()) return true;
+
+    if (!(m_field058 - m_field060 < 1.0f)) { m_field05c = m_field058; return true; }
+    if (m_field05c == 0.0f)                { m_field05c = m_field058; return true; }
+    if (!(m_field058 - m_field05c < 1.0f)) { m_field05c = m_field058; return true; }
+    if (!m_selectable)                     { m_field05c = m_field058; return true; }
+    if (!nodeStateCurrentIsNegative(state)) { m_field05c = m_field058; return true; }
+    if (m_field064 != row)                 { m_field05c = m_field058; return true; }
+
+    if (m_selectAction) {
+        const NodeInputEvent event = {1, 0, 0.0f, 0.0f, 0};
+        m_selectAction->execute(system, bounds, state, &event);                  // +0x40
+    }
+    m_field060 = 0.0f;
+    m_field05c = 0.0f;
+    m_field058 = 0.0f;
+    m_field064 = -1;
+    return false;
 }
+#if defined(_M_IX86)
 static_assert(sizeof(BfNewListBoxNode) == 296, "native BfNewListBoxNode storage");
+#endif
 } }
 #endif

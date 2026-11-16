@@ -401,15 +401,18 @@ void GameLogicDamage::serverGiveDamage(IObject* object, float damage, IPlayer* a
                 victims.push_back(seatPlayer);
             }
 
-            // The vestigial client block - see the header. Virtual calls kept, results dropped.
+            // The Falcon "Damage" envelope's inputs (BF2.exe 0x5E64A3..0x5E66A2, ledger N2 17b): the
+            // look-at frame from the owner to the hit and the owner's three rows. As in the ELF, the calls
+            // stay and the haptic block itself is gone (archived device, Code/Archive/NovintFalcon).
             {
                 Mat4 lookAt = Mat4::getIdentity();
-                owner->getAbsoluteTransformation();                               // +0x84
-                owner->getAbsoluteTransformation();
-                owner->getAbsoluteTransformation();
+                owner->getAbsoluteTransformation();                               // +0x84 (row 2)
+                owner->getAbsoluteTransformation();                               // (row 0)
+                const Mat4& ownerTransform = owner->getAbsoluteTransformation();  // (row 1)
                 Vec3 up = { 0.0f, 1.0f, 0.0f };
                 calcLookAtMatrix(lookAt, owner->getAbsolutePosition(), position, up);
-                playerManager->getLocalHumanPlayer();                             // +0x30
+                IPlayer* const localPlayer = playerManager->getLocalHumanPlayer(); // +0x30
+                (void) localPlayer; (void) ownerTransform;
                 if (attacker && seatPlayer && attacker != seatPlayer)
                 {
                     seatPlayer->getTeam();
@@ -427,8 +430,8 @@ void GameLogicDamage::serverGiveDamage(IObject* object, float damage, IPlayer* a
     {
         Vec3 pos = position;
         const unsigned int weaponId = weapon->getObjectId();                       // +0x10
-        // ..539 / PE 58763F..684: registered IBFCollisionHandler,
-        // not the independent chosen g_bfCollisionHandler storage. Vec3 is
+        // ..539 / bf2_w32ded.exe 0x58763F..684: the registered IBFCollisionHandler, the same
+        // variable (w32ded 0x8B7030, BF2.exe 0xA38688) every other engine report reads. Vec3 is
         // BY value (mangling and PE's twelve stack bytes); GCC passes its copy
         // indirectly. The typed call preserves the native compiler's ABI.
         collisionHandler->handleProjectileDamage(owner, damage, seatPlayer->getId(), weaponId, pos);

@@ -1,5 +1,9 @@
 // Transform-node state updates and metadata; unsupported Node suffix calls retain diagnostic stops.
 #include "TransformNode.h"
+#include "TransformLayout.h"
+#if !defined(_MSC_VER) || !defined(_M_IX86)
+#include "../../Math/PortableX87.h"
+#endif
 #if !DEDICATED
 #include "NodeState.h"
 #include "Stream.h"
@@ -7,6 +11,15 @@
 #include "System.h"
 #include "TypeDescriptor.h"
 namespace dice { namespace meme {
+// [CHOSEN, not recovered] Issue #33: clients may supply a layout policy for their own System.
+TransformBoundsFilter transformBoundsFilter = nullptr;
+Rect layoutTransformBounds(System* system, Node* node, const Rect& parent,
+                           const hfe::Vec2& position, const hfe::Vec2& size)
+{
+    Rect result = {parent.x + position.x, parent.y + position.y, size.x, size.y, parent.z};
+    if (transformBoundsFilter) transformBoundsFilter(system, node, result);
+    return result;
+}
 namespace {
 // [INFERRED] descriptor class name. Table94AE90 is a complete eight-slot
 // interface; its independent counterA398D4 is not adjusted by construction.
@@ -30,6 +43,8 @@ public:
     unsigned int getInstanceSize() override { return sizeof(TransformNode); }
 };
 
+// PE 0x101C4BA0: RendDX9's standalone copy (ecx = value, stream and the two names on the stack, retn
+// 0xC); unreachable in 1.50 there: no code or data references.
 bool streamPair(hfe::Vec2& value, Stream* stream, const char* first, const char* second)
 {
     if (!stream->streamFloat(&value.x, first)) return false;
@@ -37,6 +52,8 @@ bool streamPair(hfe::Vec2& value, Stream* stream, const char* first, const char*
 }
 float decodedState(float value) // float stores in838F40 and82D340
 {
+#if defined(_WIN32)
+#if defined(_M_IX86)
     float result;
     __asm {
         fld value
@@ -51,6 +68,20 @@ float decodedState(float value) // float stores in838F40 and82D340
         fstp result
     }
     return result;
+#else
+    // [PLATFORM] x64: SSE2 arithmetic (x87 keeps 80-bit intermediates).
+    // Only an ordered negative value is decoded; zero, positive and NaN pass through the
+    // double round trip, which quiets a signalling NaN as fld/fstp does.
+    const double loaded = value;
+    return static_cast<float>(value < 0.0f ? -(loaded + 1.0) : loaded);
+#endif
+#else
+// [CHOSEN, not recovered] Preserve the S2.1 POSIX numeric arm (docs/macos-port.md).
+    float result;
+    // [CHOSEN, not recovered] Preserve x87 negative-state decoding and float store.
+    result = bf2x87::store(bf2x87::decoded(value));
+    return result;
+#endif
 }
 float stateRate(const NodeState& state) // 838F40 ->82BD30; System/Node receivers unused
 {
@@ -62,6 +93,8 @@ float stateRate(const NodeState& state) // 838F40 ->82BD30; System/Node receiver
 }
 bool sumNotLess(float first, float second, float limit) // 82D49E..4BB, unordered passes
 {
+#if defined(_WIN32)
+#if defined(_M_IX86)
     bool result;
     __asm {
         fld first
@@ -72,6 +105,19 @@ bool sumNotLess(float first, float second, float limit) // 82D49E..4BB, unordere
         setp result
     }
     return result;
+#else
+    // [PLATFORM] x64: SSE2 arithmetic (x87 keeps 80-bit intermediates).
+    // setp after test ah,5: false only for an ordered sum below the limit.
+    const double sum = static_cast<double>(first) + second;
+    return !(sum < limit);
+#endif
+#else
+// [CHOSEN, not recovered] Preserve the S2.1 POSIX numeric arm (docs/macos-port.md).
+    bool result;
+    // [CHOSEN, not recovered] Preserve x87 unordered-or-not-less sum.
+    result = bf2x87::sumNotLess(first, second, limit);
+    return result;
+#endif
 }
 }
 
@@ -109,16 +155,14 @@ bool TransformNode::streamProperties(System* system, Stream* stream)
 void TransformNode::visitChildren(System* system, NodeState* state,
                                  const Rect* bounds, NodeVisitor* visitor)
 {
-    const Rect transformed = {bounds->x + m_position.x, bounds->y + m_position.y,
-        m_size.x, m_size.y, bounds->z};
+    const Rect transformed = layoutTransformBounds(system, this, *bounds, m_position, m_size);
     visitor->traverse0x08(system, m_child, &transformed, &m_state);
     visitor->visit(system, m_next, bounds, state);
 }
 void TransformNode::paint(System* system, const NodeState* state, const Rect* bounds,
                           const Rect* clip, RenderContext* context)
 {
-    const Rect transformed = {bounds->x + m_position.x, bounds->y + m_position.y,
-        m_size.x, m_size.y, bounds->z};
+    const Rect transformed = layoutTransformBounds(system, this, *bounds, m_position, m_size);
     paintSelf(system, state, &transformed, clip, context);
     if (m_child) {
         if (context->effect) {
@@ -133,8 +177,7 @@ void TransformNode::paint(System* system, const NodeState* state, const Rect* bo
 bool TransformNode::update(System* system, const NodeState* state,
                            const Rect* bounds, float delta)
 {
-    const Rect transformed = {bounds->x + m_position.x, bounds->y + m_position.y,
-        m_size.x, m_size.y, bounds->z};
+    const Rect transformed = layoutTransformBounds(system, this, *bounds, m_position, m_size);
     bool inside = false;
     if (state->target < 0.0f) {
         const float* position = system->getPointerPosition();
@@ -154,7 +197,9 @@ void TransformNode::reset() // 82D560; Node's real+C4 dispatch remains a named f
     if (m_child) m_child->reset();
     Node::reset();
 }
+#if defined(_M_IX86)
 static_assert(sizeof(TransformNode) == 36, "native x86 TransformNode storage");
 static_assert(sizeof(TransformNodeTypeDescriptor) == 16, "native TransformNode metadata");
+#endif
 } }
 #endif

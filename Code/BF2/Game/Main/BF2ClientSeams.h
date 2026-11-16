@@ -75,26 +75,9 @@ namespace hud {
 class BF2HudManager; // Menu/BF2HudManager.h: recovered construction, incomplete virtual surface
 } // namespace hud
 
-// [FRONTIER] [CHOSEN, not recovered] Partial voice-client declaration used by HUD code.
-// Construction, registration, and update are omitted (RW-94); bf2VoipClient must stay null.
-// [RETIRE-WHEN: voip-client-hud-seam] Replace this declaration with the complete class
-// before constructing a client. Its virtual positions and layout are not ABI-compatible.
-class BF2VoipClient
-{
-public:
-    BF2VoipClient();
-    // . A folded byte getter: the leader channel is in use.
-    virtual bool getUsingLeaderChannel();          // retail +0xA0
-    // . The HUD filter's leader-channel toggle; reads the local
-    // player's squad-leader/commander state and answers the new state.
-    virtual bool updateLeaderChannel(bool pressed); // retail +0xA4
-    // . The other folded byte getter, read before push-to-talk.
-    virtual bool getPushToTalkEnabled();           // retail +0xA8
-    // . The HUD filter's push-to-talk edge.
-    virtual void setPushToTalk(bool pressed);      // retail +0xB4
-
-    virtual bool isBusy();                         // retail +0xE4
-};
+// The voice client (BF2.exe vtable 0x89C1A8): Game/VoipClient/BF2VoipClient.h. Callers include that
+// header; this one only names the type for the singleton slot below.
+class BF2VoipClient;
 
 // Globals the client image owns. Defined in Game/Main/BF2Engine.cpp ([CHOSEN] placement: their
 // .data neighbours are that TU's statics - see the definitions).
@@ -103,8 +86,8 @@ extern BF2VoipClient*      bf2VoipClient;            // ds:0x9A4DA0 - the "Bf2Vo
 extern BF2Render*          g_bf2Render;              // ds:0x9A5580 - published by BF2Render ctor
 extern IBase*              g_geometryTemplateManager;// ds:0x9A5578 - 20 PE readers after init
 extern IBase*              g_renderer;               // BF2.exe `g_Renderer` - [UNRESOLVED] symbol name
-extern IBase*              unresolvedGlobalA33C08;   // ds:0xA33C08; bf2_w32ded ds:0x8B25B0, written by
-                                                     //   ai::AIInstanceServer::updateInstance - [UNRESOLVED] identity
+extern IBase*&             unresolvedGlobalA33C08;   // ds:0xA33C08 = ai::g_aiInstance (BF2.exe 0x801030,
+                                                     //   AIInstanceServer::updateInstance); bf2_w32ded ds:0x8B25B0
 
 // The client's singleton slots (BF2.exe 0x4301A9 registers them; ds:0x987340..0x987398). The
 // first two rows pass IID 1 and flags 1, transcribed as-is in Core/ModuleRegistry.cpp.
@@ -136,14 +119,8 @@ extern IBase* g_serverLogoManager;                   // ds:0x987340  "ServerLogo
 
 // Remaining client seams use role-based names where known and vslot names where
 // [UNRESOLVED]. Slot comments describe the PE ABI; typed interfaces own other services.
-bool        modInfo_vslot0x30(IBase* modInfo, const std::string& modName);      // IModInfo +0x30   startGame join result 8 - [UNRESOLVED] role
-void        localProfileManager_vslot0x70(IBase* lpm, const std::string& value); // +0x70  activateMod*
-const std::string& localProfileManager_vslot0xD0(IBase* lpm, std::string& scratch, int arg);  // +0xD0  activateMod*
-void        bf2VoipClient_update(BF2VoipClient* voip);                          // +0x9C   mainLoop   [INFERRED] role
-bool        unresolvedGlobalA33C08_vslot0x18();                                 // +0x18   mainLoop (ragdoll viewer), 0x4038A0
-// Optional haptic force targets; the declared seam requires their actual interfaces.
-extern IBase* g_hapticForceTargets[6];   // ds:0x9EBEC8, 0x9EBECC, 0x9EBF00, 0x9EBF04, 0x9EBF08, 0x9EBF0C  [UNRESOLVED] identity; null in this image
-void        hapticTarget_vslot0x4C(IBase* target, const double* force3);                      // +0x4C  a NovintHFX::Vect3 built from three doubles
+bool        modInfo_vslot0x30(IBase* modInfo, const std::string& modName);      // IModInfo +0x30   startGame join result 8: getModFromPath != null
+bool        unresolvedGlobalA33C08_vslot0x18();                                 // +0x18   mainLoop (ragdoll viewer), 0x40D227: IAIInstance::isInitialized
 
 } // namespace hfe
 } // namespace dice

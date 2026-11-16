@@ -3,6 +3,13 @@
 // Geometry setup is client-only. Preserve NaN lifetime handling and fatal checks for invalid lifetime,
 // unsupported light-source attachment, rejected mesh attachment and invalid geometry part.
 
+#if defined(__APPLE__)
+#include "../../../Platform/X87Compat.h" // [CHOSEN, not recovered] x87 conversion results, including invalid inputs.
+#if defined(BF2_STATIC_PLUGINS) && !defined(_MSC_VER)
+// [CHOSEN, not recovered] One native scale-interface declaration in every image.
+#include "../../../Geom/IScaleable.h"
+#endif
+#endif
 #include "Particle.h"
 #include "ParticleTemplate.h"
 #include "Emitter.h"                               // fx2_emitter's world::Emitter (playParticleCollisionSound)
@@ -11,7 +18,7 @@
 #include "../../../Core/ClassManager.h"
 #include "../../../Core/Debug.h"
 #include "../../../Core/Ids.h"
-#include "../../../Core/Random.h"                  // g_random, RandomDistribution
+#include "../../../Core/Random.h"                  // Rand, RandomDistribution
 #include "../../../Geom/GeometryInstanceData.h"    // the two opacity factors + setOpacity
 #include "../../../Physics/CollisionManager.h"     // ICollisionManager::getCollisionMeshPart
 #include "../../../Physics/ICollisionMesh.h"       // ICollisionMesh::createMaterialMapping
@@ -41,15 +48,19 @@ namespace {
 
 // geom::IScaleable - the IBase quartet plus setScale at +0x10, exactly the view GenericProjectile.cpp
 // declares for the same IID. ELF 0x82090A4 / PE 0x64A1B1 call +0x10 with the address of a Vec3.
+#if defined(BF2_STATIC_PLUGINS) && !defined(_MSC_VER)
+using IScaleable = geom::IScaleable;
+#else
 class IScaleable : public IBase
 {
 public:
     virtual void setScale(const Vec3& scale) = 0;
 };
+#endif
 
 // the RandomDistribution sampler, client order
 // BF2.exe 0x5E74B0 (121 B) on the process-global Random (ds:977F88; the ELF's Rand 0x8ABBCB0, this
-// tree's g_random): when `relative` is set it draws the sign first - u <= 0.5 (compared as a double
+// tree's Rand): when `relative` is set it draws the sign first - u <= 0.5 (compared as a double
 // 0.5) gives -1 - and only then 0x5E7450 draws the value; the product is the result. [PLATFORM] The
 // ELF constructor inlines the same distribution five times with the draws the other way round
 // (value first, sign second: e.g. 0x82060BC after the arm at 0x8207000). Both use the global
@@ -58,7 +69,7 @@ float unitRandom()
 {
     // / 0x5E7360 / 0x5E74B0: `(raw | 0x80) sar 7, + 1` - equal to `((raw >> 7) | 1) + 1`
     // for every raw the Lehmer state can produce (< 2^31) - then * 2^-24.
-    return static_cast<float>(static_cast<int>(((g_random.getRaw() >> 7) | 1u) + 1u))
+    return static_cast<float>(static_cast<int>(((Rand.getRaw() >> 7) | 1u) + 1u))
          * 0.000000059604645f;
 }
 
@@ -79,7 +90,7 @@ float sampleDistribution(const RandomDistribution& distribution)
                                      * distribution.value));
         break;
     case CRD_NORMAL:                                   // (getNormal) * variation + value
-        value = g_random.getNormal() * distribution.variation + distribution.value;
+        value = Rand.getNormal() * distribution.variation + distribution.value;
         break;
     default:
         value = 0.0f;
@@ -332,8 +343,13 @@ void Particle::init()
             // [PLATFORM] BF2.exe multiplies the x87 sample by the count (fimul), floors it as a
             // double (msvcr71 floor) and truncates; the ELF uses floorf on the float product.
             const float sample = sampleDistribution(partDistribution);
+#if defined(__APPLE__)
+            const int part = bf2x87::toIntTruncate(std::floor(static_cast<double>(sample)
+                                                         * static_cast<double>(partCount)));
+#else
             const int part = static_cast<int>(std::floor(static_cast<double>(sample)
                                                          * static_cast<double>(partCount)));
+#endif
             m_geometryPart = part;
             m_assignedGeometryPart = part;
         }
@@ -436,7 +452,11 @@ void Particle::handleUpdate(float deltaTime, unsigned int)
         if (clamped > 1.0f)                        // PE `test ah, 41h; jne` / ELF fcmovnbe
             clamped = 1.0f;
         const float scaled = clamped * 100.0f;     // 101 curve positions, 0..100
+#if defined(__APPLE__)
+        sample = bf2x87::toIntTruncate(scaled);         // truncation (PE fistp under a chop control word)
+#else
         sample = static_cast<int>(scaled);         // truncation (PE fistp under a chop control word)
+#endif
         blend = scaled - static_cast<float>(sample);
     }
 

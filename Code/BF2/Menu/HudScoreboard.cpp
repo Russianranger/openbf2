@@ -307,7 +307,7 @@ void HudScoreboard::paintCommanderHeader(meme::BfListBoxData* list, int team)
     paintTotalRow(list, team, -1);
     list->appendCell0x7c81c0(10, formatString("%i", -1), c.r, c.g, c.b, c.a, 0);
     list->setRowHighlight0x7c4ba0(m_currentRow, 0.4862745106220245f, 0.4784313738346100f,
-        0.3882353007793427f, 0.8999999761581421f, 0.0f, m_field028, m_rowHeight);
+        0.3882353007793427f, 0.8999999761581421f, 0.0f, static_cast<float>(m_field028), m_rowHeight);
     ++m_currentRow;
 }
 
@@ -345,7 +345,7 @@ void HudScoreboard::paintSquadHeader(meme::BfListBoxData* list, int team, int sq
     paintTotalRow(list, team, squad);
     list->appendCell0x7c81c0(10, formatString("%i", -1), c.r, c.g, c.b, c.a, 0);
     list->setRowHighlight0x7c4ba0(m_currentRow, 0.4862745106220245f, 0.4784313738346100f,
-        0.3882353007793427f, 0.8999999761581421f, 0.0f, m_field028, m_rowHeight);
+        0.3882353007793427f, 0.8999999761581421f, 0.0f, static_cast<float>(m_field028), m_rowHeight);
     ++m_currentRow;
 }
 
@@ -440,8 +440,8 @@ void HudScoreboard::paintRow(meme::BfListBoxData* list, world::IPlayer* player, 
 {
     if (!player) return;
 
-    const int kitIcon = hudManager->getPlayerKitIcon(player, false, false);   // PE +0x64
-    const int rankIcon = hudManager->getPlayerRankIcon(player);               // PE +0x68
+    const meme::TextureHandle kitIcon = hudManager->getPlayerKitIcon(player, false, false); // PE +0x64
+    const meme::TextureHandle rankIcon = hudManager->getPlayerRankIcon(player);             // PE +0x68
     const bool ownSide = m_team == team;
     const int side = ownSide ? 2 : 1;
 
@@ -455,7 +455,7 @@ void HudScoreboard::paintRow(meme::BfListBoxData* list, world::IPlayer* player, 
         text = scoreboardNameColors[side];
 
     // the VoIP column's icon ------------------------------------------------------------
-    int voipIcon = m_textures[1];                                 // checkbox_empty
+    meme::TextureHandle voipIcon = m_textures[1];                 // checkbox_empty
     if (player->getVoipEnabled())                                 // PE +0x268
     {
         bool decided = false;
@@ -478,7 +478,7 @@ void HudScoreboard::paintRow(meme::BfListBoxData* list, world::IPlayer* player, 
     }
 
     // the kick-vote column's icon -------------------------------------------------------
-    int voteIcon = 0;
+    meme::TextureHandle voteIcon = 0;
     bool voteTarget = false;
     if (ClientVoteManager::getInstance()->votingEnabled() && !player->getIsAIPlayer())
     {
@@ -600,7 +600,7 @@ void HudScoreboard::paintRow(meme::BfListBoxData* list, world::IPlayer* player, 
     {
         if (!m_toggleSquads) m_rowCount = m_currentRow;
         list->setRowHighlight(m_currentRow, 0.9960784316062927f, 0.7529411911964417f,
-            0.08235294371843338f, 0.3499999940395355f, 0.0f, m_field028, m_rowHeight);
+            0.08235294371843338f, 0.3499999940395355f, 0.0f, static_cast<float>(m_field028), m_rowHeight);
         ++m_currentRow;
     }
     else
@@ -608,7 +608,7 @@ void HudScoreboard::paintRow(meme::BfListBoxData* list, world::IPlayer* player, 
         const int parity = m_currentRow >= 0 ? m_currentRow % 2 : m_currentRow % 2 + 2;
         if (parity > 0)
             list->setRowHighlight0x7c4ba0(m_currentRow, 0.7254902124404907f, 0.7098039388656616f,
-                0.5803921818733215f, 0.800000011920929f, 0.0f, m_field028, m_rowHeight);
+                0.5803921818733215f, 0.800000011920929f, 0.0f, static_cast<float>(m_field028), m_rowHeight);
         ++m_currentRow;
     }
 }

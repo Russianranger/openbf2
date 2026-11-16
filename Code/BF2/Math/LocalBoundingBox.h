@@ -16,9 +16,13 @@ namespace dice {
 namespace hfe {
 
 struct Ray3;
+class Frustum;
+class BoundingBox;
 
 struct LocalBoundingBox
 {
+    // RendDX9.dll PE 0x10030EF0 (COMDAT copy, answers this): +0x00..+0x1C zero, dirty byte +0x20 = 1,
+    // +0x24..+0x38 zero; the lightmap traces construct their light bounds with it.
     LocalBoundingBox()
     {
         m_min.x = m_min.y = m_min.z = 0.0f;
@@ -30,7 +34,7 @@ struct LocalBoundingBox
         m_centre.x = m_centre.y = m_centre.z = 0.0f;
     }
 
-    // Recomputes center, size and corner-derived radii, then clears the dirty flag.
+    // ELF 0x4983E0. Recomputes center, size and corner-derived radii, then clears the dirty flag.
     void calcRadius()
     {
         float maxOrigin = 0.0f;
@@ -62,7 +66,7 @@ struct LocalBoundingBox
         m_derivedDataDirty = false;
     }
 
-    // Tests squared point-to-box distance against squared radius, visiting z, y, then x.
+    // ELF 0x497590. Tests squared point-to-box distance against squared radius, visiting x, y, then z.
     bool intersectSphere(const Vec3& centre, float radius) const
     {
         float d2 = 0.0f;
@@ -79,7 +83,7 @@ struct LocalBoundingBox
         return radius * radius >= d2;
     }
 
-    // Expands max before min on each axis, then marks derived bounds dirty.
+    // ELF 0x495DA0. Expands max before min on each axis, then marks derived bounds dirty.
     void expand(const Vec3& p)
     {
         if (p.x > m_max.x) m_max.x = p.x;
@@ -101,6 +105,15 @@ struct LocalBoundingBox
         m_derivedDataDirty = true;
     }
 
+    void expand(const BoundingBox& box);
+    // Tests transformed corners against selected planes; both pointers must be valid even with mask zero.
+    bool inside(const Frustum* frustum, const Mat4* transform, unsigned char mask) const;
+    bool inside(const Frustum& frustum) const;
+    // Returns the largest cached size's axis (x=0, y=1, z=2), recalculating when dirty.
+    // Ties favor the earlier axis.
+    int getMajorAxis() const;
+    bool isInside(const Vec3& point, const Vec3& ownerPosition, const Mat4& ownerInverse) const;
+
     // Returns size, recalculating derived bounds when dirty.
     const Vec3& getSize()
     {
@@ -109,6 +122,9 @@ struct LocalBoundingBox
         return m_size;
     }
 
+    // ELF 0x4982E0; engine ELF 0x83B4AA0; RendDX9.dll copy PE 0x101C5DD0 (unreachable there: no code or
+    // data references; instruction-identical, once addresses are normalised, to BF2.exe PE 0x6DB430, and
+    // its rotated components use the same different association as the PE copy of isInside(point)).
     // Tests the world-space sphere center against this box expanded by radius in the owner's local frame.
     bool isInside(const Vec3& centre, float radius, const Vec3& ownerPosition,
                   const Mat4& ownerInverse) const
@@ -120,13 +136,12 @@ struct LocalBoundingBox
         const float lx = m[4] * dy + m[0] * dx + m[8]  * dz;
         const float ly = m[9] * dz + (m[5] * dy + m[1] * dx);
         const float lz = dz * m[10] + dy * m[6] + dx * m[2];
-        if (lx < m_min.x - radius)  return false;
-        if (m_max.x + radius < lx)  return false;
-        if (ly < m_min.y - radius)  return false;
-        if (m_max.y + radius < ly)  return false;
-        if (lz < m_min.z - radius)  return false;
-        if (radius + m_max.z < lz)  return false;
-        return true;
+        if (!(lx >= m_min.x - radius)) return false;
+        if (!(m_max.x + radius >= lx)) return false;
+        if (!(ly >= m_min.y - radius)) return false;
+        if (!(m_max.y + radius >= ly)) return false;
+        if (!(lz >= m_min.z - radius)) return false;
+        return radius + m_max.z >= lz;
     }
 
     // Separating-axis test under the supplied transforms; refreshes dirty bounds.

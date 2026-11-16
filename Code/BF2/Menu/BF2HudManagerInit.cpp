@@ -4,6 +4,7 @@
 #if !DEDICATED
 #include "HudVoip.h"
 #include "Ref2System.h"
+#include "HudWidescreen.h"
 #include "Bf2HudBuilder.h"
 #include "BfListBoxData.h"
 #include "BfEditData.h"
@@ -28,7 +29,6 @@
 #include "../Game/Main/BF2ClientSeams.h"
 #include "../IO/Console/Console.h"
 #include "../IO/Input/Input.h"
-#include "../IO/Input/FalconDevice.h"
 #include <new>
 
 namespace dice { namespace hfe { namespace io { extern IBase* inputManager; } } }
@@ -61,6 +61,8 @@ bool BF2HudManager::init()
         Debug(DEBUGTYPE_6, "C:\\dice\\Projects\\BF2Branches\\Patch_1_50\\Code\\BF2\\Menu\\BF2HudManager.cpp", 918, "") << "BF2HudManager init fails";
         return false;
     }
+    // [CHOSEN, not recovered] Issue #33: attach only the in-game HUD, before its scripts run.
+    widescreen::attach(ref2System);
     runHudScript("Menu/Atlas/AtlasList.con");
     if (m_field33c.empty()) addTextureAtlas("MemeAtlas.tai");
 
@@ -107,7 +109,8 @@ bool BF2HudManager::init()
     storage=::operator new(sizeof(HudAwardCatalogue));
     m_field14c = storage ? new(storage) HudAwardCatalogue : nullptr;
     disablePointer();
-    io::g_falconMouseMode = 1;
+    // Retail also sets the Falcon's mouse mode here (ds:0x978FC4); it is archived with the device
+    // (Code/Archive/NovintFalcon).
     static_cast<io::IInputManager*>(io::inputManager)->registerInputFilter(this);
     eventManager->registerEventHandler(static_cast<EventCategory>(2), this, 0);
     eventManager->registerEventHandler(static_cast<EventCategory>(1), this, 0);
@@ -188,7 +191,7 @@ bool BF2HudManager::init()
         ref2System->loadMenu("Menu/InGame",nullptr);
         runHudScript("Menu/HUD/HudSetup/HudSetupMain.con");
         runHudScript("Menu/Nametag/nametags.con");
-        const int texture=ref2System->loadTexture("Ingame/GeneralIcons/full.tga",true);
+        const meme::TextureHandle texture=ref2System->loadTexture("Ingame/GeneralIcons/full.tga",true);
         ref2System->setDefaultTexture(texture);
         hudMap=m_field0fc->m_field008;
         // Retail _Tidy releases all storage, not just the logical elements.
