@@ -60,7 +60,14 @@ enum { VK_CONTROL=0x11, VK_MENU=0x12, VK_F10=0x79, SW_HIDE=0, SW_SHOW=5, SW_MINI
 #define GHND 0x42
 #define GMEM_MOVEABLE 2
 
-HMODULE GetModuleHandleA(LPCSTR); HMODULE LoadLibraryA(LPCSTR); FARPROC GetProcAddress(HMODULE, LPCSTR); BOOL FreeLibrary(HMODULE);
+HMODULE GetModuleHandleA(LPCSTR);
+HMODULE LoadLibraryA(LPCSTR);
+#ifdef __ANDROID__
+#include "../Core/PluginDll.h"  // ELF loader owns GetProcAddress and FreeLibrary.
+#else
+FARPROC GetProcAddress(HMODULE, LPCSTR);
+BOOL FreeLibrary(HMODULE);
+#endif
 DWORD GetTickCount(); DWORD GetCurrentProcessId(); void GlobalMemoryStatus(MEMORYSTATUS*);
 HWND CreateWindowExA(DWORD, LPCSTR, LPCSTR, DWORD, int, int, int, int, HWND, HMENU, HINSTANCE, LPVOID);
 WORD RegisterClassExA(const WNDCLASSEXA*); LRESULT DefWindowProcA(HWND, UINT, WPARAM, LPARAM); BOOL DestroyWindow(HWND);

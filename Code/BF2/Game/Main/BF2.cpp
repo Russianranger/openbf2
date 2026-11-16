@@ -756,11 +756,12 @@ void installAndroidCrashReport()
 static std::string androidCommandLine(int argc, char** argv)
 {
     std::string mod, width = "1280", height = "720", name, level, server, libraryDir, driver;
-    bool hosted = false, menu = false;
+    bool hosted = false, menu = false, coop = false;
     for (int i = 1; i < argc; ++i)
     {
         const std::string option(argv[i]);
         if (option == "--hosted") { hosted = true; continue; }
+        if (option == "--coop") { coop = true; continue; }
         if (option == "--menu") { menu = true; continue; }
         if (i + 1 >= argc) break;
         const char* const value = argv[++i];
@@ -787,6 +788,12 @@ static std::string androidCommandLine(int argc, char** argv)
     }
     if (!menu)
         setenv("BF2_PORT_DIRECT_START", "1", 1);
+    else
+        unsetenv("BF2_PORT_DIRECT_START");
+    if (!menu && hosted && coop)
+        setenv("BF2_PORT_LOCAL_COOP", "1", 1);
+    else
+        unsetenv("BF2_PORT_LOCAL_COOP");
     setenv("DXVK_WSI_DRIVER", "SDL3", 1);
     setenv("DXVK_LOG_LEVEL", "warn", 1);
     setenv("DXVK_HUD", "fps,frametimes,memory", 1);
@@ -818,27 +825,62 @@ static std::string androidCommandLine(int argc, char** argv)
     }
     if (chdir(root.c_str()) != 0)
         std::fprintf(stderr, "chdir %s failed\n", root.c_str());
-    std::string line = "+modPath mods/bf2 +fullscreen 0 +multi 1 +szx " + width + " +szy " + height;
+    std::string line = "+modPath mods/bf2 +fullscreen 0 +restart 1 +multi 1 +szx " + width + " +szy " + height;
     if (menu)
         return line;
-    line += " +playerName " + name;
+    line += " +playerName";
+    appendCommandLineArg(line, name.c_str(), false);
     if (hosted)
     {
         // The install's own settings describe a dedicated server; this game is the launcher's.
         const std::string directory(files ? files : ".");
-        const std::string mapList = directory + "/maplist.con", settings = directory + "/serversettings.con";
-        if (FILE* const out = std::fopen(mapList.c_str(), "w"))
+        const std::string mapList = directory + (coop ? "/coop-maplist.con" : "/maplist.con");
+        const std::string settings = directory + (coop ? "/coop-settings.con" : "/serversettings.con");
+        const char* const mode = coop ? "gpm_coop" : "gpm_cq";
+        FILE* out = std::fopen(mapList.c_str(), "w");
+        if (!out)
         {
-            std::fprintf(out, "mapList.append %s gpm_cq 16\n", level.c_str());
-            std::fclose(out);
+            std::perror("OpenBF2 map list");
+            return std::string();
         }
-        if (FILE* const out = std::fopen(settings.c_str(), "w"))
+        const int mapWritten = std::fprintf(out, "mapList.append %s %s 16\n", level.c_str(), mode);
+        if (std::fclose(out) != 0 || mapWritten < 0)
         {
-            std::fputs("sv.voipEnabled 0\nsv.serverPort 16567\nsv.internet 0\nsv.numPlayersNeededToStart 1\n", out);
-            std::fclose(out);
+            std::perror("OpenBF2 map list write");
+            return std::string();
         }
-        line += " +hostServer 1 +port 16567 +loadLevel " + level + " +gameMode gpm_cq +maxPlayers 16"
-            + " +mapList " + mapList + " +config " + settings;
+        out = std::fopen(settings.c_str(), "w");
+        if (!out)
+        {
+            std::perror("OpenBF2 server settings");
+            return std::string();
+        }
+        std::fputs("sv.voipEnabled 0\nsv.serverPort 16567\nsv.internet 0\nsv.numPlayersNeededToStart 1\n", out);
+        if (coop)
+        {
+            std::fputs("sv.serverIP \"127.0.0.1\"\nsv.interfaceIP \"127.0.0.1\"\n"
+                       "sv.coopBotCount 16\nsv.coopBotRatio 50\nsv.coopBotDifficulty 50\n"
+                       "sv.useGlobalRank 0\nsv.useGlobalUnlocks 0\n"
+                       "sv.adminScript \"bf2_offline_career\"\n", out);
+            line += " +ai 1";
+        }
+        const bool writeFailed = std::ferror(out) != 0;
+        if (std::fclose(out) != 0 || writeFailed)
+        {
+            std::perror("OpenBF2 server settings write");
+            return std::string();
+        }
+        line += " +hostServer 1 +port 16567 +loadLevel";
+        appendCommandLineArg(line, level.c_str(), false);
+        line += " +gameMode ";
+        line += mode;
+        line += " +maxPlayers 16 +mapList";
+        appendCommandLineArg(line, mapList.c_str(), false);
+        line += " +config";
+        appendCommandLineArg(line, settings.c_str(), false);
+        if (coop)
+            std::fprintf(stderr, "OpenBF2 offline co-op: map=%s mode=%s bots=16 listen=127.0.0.1\n",
+                         level.c_str(), mode);
     }
     else
     {
@@ -869,6 +911,8 @@ int main(int argc, char** argv)
 {
 #if defined(__ANDROID__)
     const std::string androidLine = androidCommandLine(argc, argv);
+    if (androidLine.empty())
+        return 1;
 #endif
     dice::hfe::g_system = new dice::hfe::System();
     std::string commandLine;

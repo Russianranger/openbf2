@@ -1350,7 +1350,7 @@ void Skeleton::getCollisionBoneTransform(hfe::Mat4* out, const hfe::Mat4& transf
 void Skeleton::applyIk(int boneIndex, int effectorBoneIndex,
                        const hfe::Vec3& target, const hfe::Mat4& transform)
 {
-    const char existing = m_bones[boneIndex].m_ikHandleIndex;                 // +0x04 + 72n + 0x44
+    const signed char existing = m_bones[boneIndex].m_ikHandleIndex;                 // +0x04 + 72n + 0x44
     int handleIndex;
     if (existing == -1)
     {
@@ -1364,7 +1364,7 @@ void Skeleton::applyIk(int boneIndex, int effectorBoneIndex,
         blank.m_effectorBoneIndex = 0;
         m_ikHandles.push_back(blank);                    // resize(size + 1, blank), as compiled
         m_ikHandles[handleIndex].m_boneIndex = boneIndex;                     // +0x4C
-        m_bones[boneIndex].m_ikHandleIndex = static_cast<char>(handleIndex); // +0x44 narrowed
+        m_bones[boneIndex].m_ikHandleIndex = static_cast<signed char>(handleIndex); // +0x44 narrowed
     }
     else
     {

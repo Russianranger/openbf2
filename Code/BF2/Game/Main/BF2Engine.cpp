@@ -21,6 +21,7 @@
 #include "../../Core/DebugCounterManager.h" // the per-frame update dispatched from mainLoop
 #include "../IModInfo.h"                    // real IModInfo - replaces a shim whose slot 0 was wrong
 #include "../SingletonServer.h"
+#include "../../Core/Ids.h"                 // the menu CIDs / IID_IMenuLogic / IID_IFSMoviePlayer
 #include "../../IO/File/FileChangeManager.h" // io::FileChangeManager + the fileChangeManager global
 #include "../IGame.h"                       // [INFERRED] path
 #include "../ControlSettings.h"             // IControlSettings::setMappingInput - the (10,12) handler
@@ -88,7 +89,6 @@
 #include "../../Menu/BF2HudManager.h"       // constructor and established virtual prefix; publication gated
 #include <cstdio>
 #include <cstdlib>
-#include "../../Core/Ids.h"                 // the menu CIDs / IID_IMenuLogic / IID_IFSMoviePlayer
 #include "BF2Window.h"                      // the game window (brings <windows.h>)
 #include "../../Menu/IMenuLogic.h"          // menuLogic
 #include "../../Sound/BfSound/MusicPlayer.h"

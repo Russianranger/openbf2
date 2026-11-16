@@ -96,8 +96,10 @@ static void pumpSdl() {
 
 HMODULE GetModuleHandleA(LPCSTR) { return (HMODULE)&g_window; }
 HMODULE LoadLibraryA(LPCSTR name) { return dlopen(name, RTLD_NOW); }
+#if !defined(__ANDROID__)
 FARPROC GetProcAddress(HMODULE m, LPCSTR n) { return (FARPROC)dlsym(m, n); }
 BOOL FreeLibrary(HMODULE m) { return m && dlclose(m) == 0; }
+#endif
 // Toggles the on-screen keyboard; the menu's text fields have no other way to ask for one.
 extern "C" void portableToggleKeyboard() {
     if (!g_window) return;

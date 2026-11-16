@@ -1,0 +1,332 @@
+package com.mackillergr.bf2;
+
+import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.View;
+import org.libsdl.app.SDLActivity;
+import java.util.HashMap;
+
+/** On-screen controls. They feed SDL the same keys and mouse a PC player uses. */
+public class TouchOverlay extends View {
+    private static final int MOUSE_DOWN = 0, MOUSE_UP = 1, MOUSE_MOVE = 2, LEFT_BUTTON = 1;
+
+    private static class Button {
+        final String label; final int key; final float rx, ry; int pointer = -1;
+        Button(String label, int key, float rx, float ry) { this.label = label; this.key = key; this.rx = rx; this.ry = ry; }
+    }
+    private final Button[] buttons = {
+        new Button("Fire", 0, 0.90f, 0.62f),
+        new Button("Jump", KeyEvent.KEYCODE_SPACE, 0.80f, 0.82f),
+        new Button("Crouch", KeyEvent.KEYCODE_CTRL_LEFT, 0.90f, 0.86f),
+        new Button("Sprint", KeyEvent.KEYCODE_SHIFT_LEFT, 0.70f, 0.86f),
+        new Button("Reload", KeyEvent.KEYCODE_R, 0.80f, 0.60f),
+        new Button("Use", KeyEvent.KEYCODE_E, 0.70f, 0.66f),
+        new Button("Score", KeyEvent.KEYCODE_TAB, 0.95f, 0.10f),
+        new Button("OK", KeyEvent.KEYCODE_ENTER, 0.86f, 0.10f),
+        new Button("Menu", KeyEvent.KEYCODE_ESCAPE, 0.05f, 0.10f),
+    };
+    private final HashMap<Integer, float[]> look = new HashMap<>();
+    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), text = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private int stickPointer = -1;
+    private float stickX, stickY, knobX, knobY;
+    private boolean w, a, s, d;
+    private boolean menu;
+    private int gameWidth = 1280;
+    private int gameHeight = 720;
+    private float lastTapX = -1, lastTapY = -1;
+    public void setGameResolution(int width, int height) {
+        if (width > 0 && height > 0) {
+            gameWidth = width;
+            gameHeight = height;
+        }
+        invalidate();
+    }
+    private float[] touchToSdl(float x, float y) {
+        return MenuPointerMapper.map(x, y, getWidth(), getHeight(), gameWidth, gameHeight);
+    }
+    private void traceTouch(String phase, float rawX, float rawY, float[] converted) {
+        android.util.Log.i("BF2MenuTouch", phase + " raw=(" + rawX + "," + rawY
+                + ") sdl=(" + converted[0] + "," + converted[1]
+                + ") overlay=" + getWidth() + "x" + getHeight()
+                + " game=" + gameWidth + "x" + gameHeight);
+    }
+    // The intro movie uses the keyboard's DIK_ESCAPE (1) to advance skippable clips.
+    // Hide this overlay once the native Flash main menu has appeared.
+    private boolean introSkipVisible = true;
+    private int introSkipPointer = -1;
+    private int logPointer = -1;
+    private long skipPressedAt = 0L;
+    static native boolean menuShown();
+    private static native void toggleKeyboard();
+    private final Runnable watch = new Runnable() {
+        @Override public void run() {
+            boolean now = menu;
+            try { now = menuShown(); } catch (UnsatisfiedLinkError notLoaded) { }
+            // menuShown() is true even while intro videos play; never hide Skip Intro here.
+            if (now != menu) { releaseAll(); menu = now; invalidate(); }
+            postDelayed(this, 250);
+        }
+    };
+
+    public TouchOverlay(Context context) {
+        super(context);
+        text.setColor(Color.WHITE); text.setTextAlign(Paint.Align.CENTER); text.setFakeBoldText(true);
+        post(watch);
+    }
+    private void releaseAll() {
+        for (Button b : buttons) if (b.pointer >= 0) { b.pointer = -1; press(b, false); }
+        if (introSkipPointer != -1) {
+            introSkipPointer = -1;
+            key(KeyEvent.KEYCODE_ESCAPE, false);
+        }
+        logPointer = -1;
+        if (menuPressed) SDLActivity.onNativeMouse(0, MOUSE_UP, 0, 0, false);
+        menuPressed = false;
+        menuPointer = -1;
+        stickPointer = -1; setMove(0, 0); look.clear();
+    }
+    private float keyboardX() { return getWidth() * 0.04f; }
+    private float keyboardY() { return getHeight() * 0.92f; }
+    private int menuPointer = -1;
+    private void menuTouch(MotionEvent e) {
+        final int action = e.getActionMasked();
+        final int index = e.getActionIndex();
+        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
+            int id = e.getPointerId(index);
+            if (menuPointer != -1) return;
+            float x = e.getX(index), y = e.getY(index);
+            if (Math.hypot(x - keyboardX(), y - keyboardY()) < radius() * 1.1f) {
+                toggleKeyboard();
+                return;
+            }
+            float[] p = touchToSdl(x, y);
+            traceTouch("DOWN", x, y, p);
+            menuPointer = id;
+            lastTapX = x; lastTapY = y;
+            SDLActivity.onNativeMouse(0, MOUSE_MOVE, p[0], p[1], false);
+            SDLActivity.onNativeMouse(LEFT_BUTTON, MOUSE_DOWN, p[0], p[1], false);
+            menuPressed = true;
+            invalidate();
+        } else if (action == MotionEvent.ACTION_MOVE) {
+            if (!menuPressed) return;
+            int idx = e.findPointerIndex(menuPointer);
+            if (idx < 0) return;
+            float x = e.getX(idx), y = e.getY(idx);
+            float[] p = touchToSdl(x, y);
+            lastTapX = x; lastTapY = y;
+            SDLActivity.onNativeMouse(0, MOUSE_MOVE, p[0], p[1], false);
+            invalidate();
+        } else if (action == MotionEvent.ACTION_UP ||
+                   action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_CANCEL) {
+            if (!menuPressed) return;
+            if (action != MotionEvent.ACTION_CANCEL && e.getPointerId(index) != menuPointer) return;
+            int idx = action == MotionEvent.ACTION_CANCEL ? Math.max(0,e.findPointerIndex(menuPointer)) : index;
+            float x = e.getX(idx), y = e.getY(idx);
+            float[] p = touchToSdl(x, y);
+            traceTouch("UP", x, y, p);
+            SDLActivity.onNativeMouse(0, MOUSE_MOVE, p[0], p[1], false);
+            SDLActivity.onNativeMouse(0, MOUSE_UP, p[0], p[1], false);
+            menuPointer = -1;
+            menuPressed = false;
+            invalidate();
+        }
+    }
+    private boolean menuPressed;
+    private float skipCenterX() { return getWidth() * 0.50f; }
+    private float skipCenterY() { return getHeight() * 0.12f; }
+    private float skipWidth() { return Math.max(160f, Math.min(260f, getWidth() * 0.22f)); }
+    private float skipHeight() { return Math.max(40f, Math.min(64f, getHeight() * 0.09f)); }
+    private boolean onSkipButton(float x, float y) {
+        return Math.abs(x - skipCenterX()) < skipWidth() * 0.5f
+                && Math.abs(y - skipCenterY()) < skipHeight() * 0.5f;
+    }
+    private void drawSkipButton(Canvas canvas) {
+        float x = skipCenterX(), y = skipCenterY();
+        float w = skipWidth(), h = skipHeight();
+        fill.setColor(Color.argb(introSkipPointer >= 0 ? 245 : 212, 24, 25, 24));
+        canvas.drawRoundRect(x - w * 0.5f, y - h * 0.5f,
+                x + w * 0.5f, y + h * 0.5f, h * 0.19f, h * 0.19f, fill);
+        fill.setColor(Color.rgb(255, 200, 0));
+        fill.setStyle(Paint.Style.STROKE);
+        fill.setStrokeWidth(Math.max(2f, h * 0.035f));
+        canvas.drawRoundRect(x - w * 0.5f, y - h * 0.5f,
+                x + w * 0.5f, y + h * 0.5f, h * 0.19f, h * 0.19f, fill);
+        fill.setStyle(Paint.Style.FILL);
+        text.setTextSize(h * 0.36f);
+        canvas.drawText("SKIP INTRO", x, y + h * 0.13f, text);
+    }
+    private float logCenterX() { return getWidth() * 0.90f; }
+    private float logCenterY() { return getHeight() * 0.12f; }
+    private boolean onLogButton(float x, float y) {
+        return Math.abs(x - logCenterX()) < skipWidth() * 0.28f
+                && Math.abs(y - logCenterY()) < skipHeight() * 0.57f;
+    }
+    private void drawLogButton(Canvas c) {
+        float x = logCenterX(), y = logCenterY();
+        float w = skipWidth() * 0.56f, h = skipHeight();
+        fill.setColor(Color.argb(215, 23, 23, 23));
+        c.drawRoundRect(x-w*0.5f,y-h*0.5f,x+w*0.5f,y+h*0.5f,h*0.2f,h*0.2f,fill);
+        text.setTextSize(h * 0.36f);
+        c.drawText("LOG", x, y + h * 0.12f, text);
+    }
+    private void releaseSkipTouch() {
+        introSkipPointer = -1;
+        long elapsed = android.os.SystemClock.uptimeMillis() - skipPressedAt;
+        // Keep ESC down across at least a few SDL frames even for very quick taps.
+        postDelayed(() -> { if (introSkipPointer == -1) key(KeyEvent.KEYCODE_ESCAPE, false); },
+                    Math.max(0L, 180L - elapsed));
+        invalidate();
+    }
+    private void exportGameLog() {
+        if (getContext() instanceof GameActivity)
+            ((GameActivity)getContext()).exportGameLog();
+    }
+    private float radius() { return getHeight() * 0.075f; }
+    private float stickRadius() { return getHeight() * 0.16f; }
+    private float baseX() { return getWidth() * 0.14f; }
+    private float baseY() { return getHeight() * 0.72f; }
+
+    @Override protected void onDraw(Canvas c) {
+        if (menu) {
+            fill.setColor(Color.argb(80, 255, 255, 255));
+            c.drawCircle(keyboardX(), keyboardY(), radius(), fill);
+            text.setTextSize(radius() * 0.42f);
+            c.drawText("ABC", keyboardX(), keyboardY() + radius() * 0.15f, text);
+            // Video playback and Flash UI both report menuShown=true in test13.
+            // Floating actions must be drawn in both modes.
+            if (introSkipVisible) drawSkipButton(c);
+            drawLogButton(c);
+            if (lastTapX >= 0) {
+                fill.setColor(Color.argb(175, 255, 200, 0));
+                c.drawCircle(lastTapX, lastTapY, Math.max(5f, radius()*0.09f), fill);
+            }
+            return;
+        }
+        fill.setColor(Color.argb(60, 255, 255, 255));
+        c.drawCircle(baseX(), baseY(), stickRadius(), fill);
+        fill.setColor(Color.argb(110, 255, 255, 255));
+        c.drawCircle(stickPointer >= 0 ? knobX : baseX(), stickPointer >= 0 ? knobY : baseY(), radius() * 0.8f, fill);
+        text.setTextSize(radius() * 0.42f);
+        for (Button b : buttons) {
+            float x = b.rx * getWidth(), y = b.ry * getHeight();
+            fill.setColor(b.pointer >= 0 ? Color.argb(150, 255, 170, 40) : Color.argb(80, 255, 255, 255));
+            c.drawCircle(x, y, radius(), fill);
+            c.drawText(b.label, x, y + radius() * 0.15f, text);
+        }
+        if (introSkipVisible) drawSkipButton(c);
+        drawLogButton(c);
+    }
+    private void key(int code, boolean down) {
+        if (down) SDLActivity.onNativeKeyDown(code); else SDLActivity.onNativeKeyUp(code);
+    }
+    private void press(Button b, boolean down) {
+        // SDL takes the button state after the event, so a release carries 0.
+        if (b.key == 0) SDLActivity.onNativeMouse(down ? LEFT_BUTTON : 0, down ? MOUSE_DOWN : MOUSE_UP, 0, 0, true);
+        else key(b.key, down);
+    }
+    private void setMove(float x, float y) {
+        boolean nw = y < -0.35f, ns = y > 0.35f, na = x < -0.35f, nd = x > 0.35f;
+        if (nw != w) key(KeyEvent.KEYCODE_W, w = nw);
+        if (ns != s) key(KeyEvent.KEYCODE_S, s = ns);
+        if (na != a) key(KeyEvent.KEYCODE_A, a = na);
+        if (nd != d) key(KeyEvent.KEYCODE_D, d = nd);
+    }
+    private Button hit(float x, float y) {
+        for (Button b : buttons) {
+            if (Math.hypot(x - b.rx * getWidth(), y - b.ry * getHeight()) < radius() * 1.1f) return b;
+        }
+        return null;
+    }
+    private void began(int id, float x, float y) {
+        Button b = hit(x, y);
+        if (b != null) { b.pointer = id; press(b, true); return; }
+        if (stickPointer < 0 && Math.hypot(x - baseX(), y - baseY()) < stickRadius() * 1.5f) {
+            stickPointer = id; stickX = baseX(); stickY = baseY(); moved(id, x, y); return;
+        }
+        look.put(id, new float[] {x, y, x, y, System.currentTimeMillis()});
+    }
+    private void moved(int id, float x, float y) {
+        if (id == stickPointer) {
+            float dx = x - stickX, dy = y - stickY, r = stickRadius(), len = (float) Math.hypot(dx, dy);
+            if (len > r) { dx *= r / len; dy *= r / len; }
+            knobX = stickX + dx; knobY = stickY + dy;
+            setMove(dx / r, dy / r);
+            return;
+        }
+        float[] p = look.get(id);
+        if (p != null) {
+            SDLActivity.onNativeMouse(0, MOUSE_MOVE, x - p[0], y - p[1], true);
+            p[0] = x; p[1] = y;
+        }
+    }
+    private void ended(int id) {
+        for (Button b : buttons) if (b.pointer == id) { b.pointer = -1; press(b, false); }
+        if (id == stickPointer) { stickPointer = -1; setMove(0, 0); }
+        float[] p = look.remove(id);
+        // A quick tap is a click on whatever is under it: the spawn screen, the HUD.
+        if (p != null && System.currentTimeMillis() - p[4] < 250 && Math.hypot(p[0] - p[2], p[1] - p[3]) < 24) {
+            SDLActivity.onNativeMouse(0, MOUSE_MOVE, p[2], p[3], false);
+            SDLActivity.onNativeMouse(LEFT_BUTTON, MOUSE_DOWN, p[2], p[3], false);
+            SDLActivity.onNativeMouse(0, MOUSE_UP, p[2], p[3], false);
+        }
+    }
+    @Override public boolean onTouchEvent(MotionEvent e) {
+        int action = e.getActionMasked(), index = e.getActionIndex();
+        // Intercept floating buttons before the Flash menu mouse forwarding.
+        // Do NOT use menuShown() here as a sign that the intro finished.
+        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
+            int id = e.getPointerId(index);
+            float x = e.getX(index), y = e.getY(index);
+            if (introSkipVisible && introSkipPointer == -1 && onSkipButton(x, y)) {
+                introSkipPointer = id;
+                skipPressedAt = android.os.SystemClock.uptimeMillis();
+                key(KeyEvent.KEYCODE_ESCAPE, true);
+                invalidate();
+                return true;
+            }
+            if (logPointer == -1 && onLogButton(x, y)) {
+                logPointer = id;
+                invalidate();
+                return true;
+            }
+        } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
+            int id = e.getPointerId(index);
+            if (id == introSkipPointer) {
+                releaseSkipTouch();
+                return true;
+            }
+            if (id == logPointer) {
+                logPointer = -1;
+                post(this::exportGameLog);
+                invalidate();
+                return true;
+            }
+        } else if (action == MotionEvent.ACTION_CANCEL) {
+            if (introSkipPointer != -1) releaseSkipTouch();
+            logPointer = -1;
+            invalidate();
+            return true;
+        }
+        if (introSkipPointer != -1 || logPointer != -1) return true;
+        if (menu) { menuTouch(e); return true; }
+        switch (action) {
+            case MotionEvent.ACTION_DOWN: case MotionEvent.ACTION_POINTER_DOWN:
+                began(e.getPointerId(index), e.getX(index), e.getY(index)); break;
+            case MotionEvent.ACTION_MOVE:
+                for (int i = 0; i < e.getPointerCount(); ++i) moved(e.getPointerId(i), e.getX(i), e.getY(i));
+                break;
+            case MotionEvent.ACTION_UP: case MotionEvent.ACTION_POINTER_UP:
+                ended(e.getPointerId(index)); break;
+            case MotionEvent.ACTION_CANCEL:
+                for (int i = 0; i < e.getPointerCount(); ++i) ended(e.getPointerId(i));
+                break;
+            default: break;
+        }
+        invalidate();
+        return true;
+    }
+}

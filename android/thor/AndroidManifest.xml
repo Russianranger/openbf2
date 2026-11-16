@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="io.github.russianranger.openbf2" android:versionCode="1" android:versionName="0.1.0">
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="33"/>
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x00400000" android:required="false"/>
+    <application
+        android:theme="@android:style/Theme.Material.NoActionBar"
+        android:label="OpenBF2"
+        android:hasCode="true"
+        android:allowBackup="false"
+        android:extractNativeLibs="true">
+        <activity
+            android:name="com.mackillergr.bf2.LauncherActivity"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|keyboardHidden|screenSize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name="com.mackillergr.bf2.LanBrowserActivity"
+            android:exported="false" android:screenOrientation="landscape"/>
+        <activity android:name="com.mackillergr.bf2.GameActivity"
+            android:exported="false" android:process=":game"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|uiMode|locale|layoutDirection"/>
+    </application>
+</manifest>

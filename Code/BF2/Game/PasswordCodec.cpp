@@ -9,7 +9,9 @@
 #include <iomanip>
 #include <ostream>
 #include <sstream>
+#ifdef _MSC_VER
 #pragma comment(lib, "crypt32.lib")
+#endif
 
 namespace dice { namespace hfe {
 

@@ -57,7 +57,7 @@ public:
         /* +0x40 */ hfe::Mat4* m_override;                     // ctor 0 - owned, see ~Bone
         // an index into the skeleton'S IK-handle array, -1 for "no IK".
         // A bone that has one is posed by applyIkSolver instead of by the hierarchy walk.
-        /* +0x44 */ char  m_ikHandleIndex;                     // ctor -1
+        /* +0x44 */ signed char m_ikHandleIndex;                     // ctor -1
         // does this bone take part in transform() at all. False skips the
         // whole computation and leaves the bone inheriting its parent's position only.
         /* +0x45 */ bool  m_transformEnabled;                  // ctor true

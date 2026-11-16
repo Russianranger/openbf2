@@ -1,5 +1,5 @@
 // Loads engine plugins for client and dedicated images; source path [INFERRED].
-// Windows unload calls optional deinitDll and reports exceptions. ELF unload only closes the library.
+// Windows unload calls optional deinitDll and reports exceptions. Linux also deinitializes before close.
 
 #include "PluginDll.h"
 
@@ -113,16 +113,14 @@ bool FreeLibraryBf(void* handle, const char* diagnosticName)
         return false;
     }
 #else
-    // : the bare wrapper call. No deinitDll lookup, no diagnostic, and the
-    // second argument is never read.
     (void)diagnosticName;
-#if !DEDICATED
-    // [CHOSEN, not recovered] The portable client reloads the menu player, so it needs the Win32
-    // arm's deinitDll: the player's registrations must be gone before the next load.
+#if !DEDICATED || defined(__linux__)
+    // Portable plugins register console objects and singletons with the engine.
+    // Unregister them before dlclose so the next map can load a fresh plugin.
     if (handle)
     {
-        typedef void (*DeinitDllFn)();
-        if (DeinitDllFn deinitDll = reinterpret_cast<DeinitDllFn>(::GetProcAddress(handle, "deinitDll")))
+        typedef void (*PortableDeinitDll)();
+        if (PortableDeinitDll deinitDll = reinterpret_cast<PortableDeinitDll>(::GetProcAddress(handle, "deinitDll")))
             deinitDll();
     }
 #endif
