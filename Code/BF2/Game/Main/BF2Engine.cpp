@@ -7,6 +7,7 @@
 #if defined(__ANDROID__) && !DEDICATED
 #include "AndroidUiState.h"
 #include "../../PortShim/AndroidPresentationGate.h"
+#include "../GameServer/OfflineTickets.h"
 #endif
 #include "BF2EngineSetup.h"
 #include "BF2Log.h"                         // [INFERRED] path; Game/Main/BF2Log.cpp is attested
@@ -1061,6 +1062,8 @@ void BF2Engine::shutdownGame(bool activateMenuAfter)   // bool from BF2.exe 0x40
 {
 #if defined(__ANDROID__) && !DEDICATED
     androidui::publish(androidui::Menu);
+    // Round restarts use GameLogic::reset; ending this game ends its override scope.
+    offline_tickets::clear();
 #endif
     if (!game)                                  // /0x8138017 -> straight to the epilogue
         return;

@@ -73,8 +73,10 @@ def build(args, out):
     run(jdk / "jar", "cf", out / "classes.jar", "-C", classes, ".")
     run(bt / "d8", "--release", "--min-api", "29", "--lib", jar, "--output", dex, out / "classes.jar")
     base = out / "base.apk"
+    resources = out / "resources.zip"
+    run(bt / "aapt2", "compile", "--dir", HERE / "res", "-o", resources)
     run(bt / "aapt2", "link", "-o", base, "-I", jar, "--manifest", HERE / "AndroidManifest.xml",
-        "-A", args.career / "assets")
+        "-A", args.career / "assets", resources)
     with ZipFile(args.bundle) as support, ZipFile(base, "a", compression=ZIP_STORED) as apk:
         prefix = "gameapp/src/main/jniLibs/arm64-v8a/"
         libs = {name.split("/")[-1]: name for name in support.namelist()

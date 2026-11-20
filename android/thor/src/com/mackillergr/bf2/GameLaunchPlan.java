@@ -7,6 +7,7 @@ import java.util.List;
 /** Converts launcher selections to the portable client's SDL arguments. */
 public final class GameLaunchPlan {
     public static final int MAX_COOP_BOTS = 63;
+    public static final int MAX_STARTING_TICKETS = 9999;
     private GameLaunchPlan() {}
 
     public static String[] forMenu(String modDir, String libDir, int width,
@@ -37,6 +38,16 @@ public final class GameLaunchPlan {
     public static String[] forCoop(String modDir, String libDir, int width, int height,
                                    String player, String driver, String level, String mode, int size,
                                    int team1, int team2) {
+        return forCoop(modDir, libDir, width, height, player, driver, level, mode, size,
+                team1, team2, 0, 0);
+    }
+
+    /** Zero leaves that team's authored map value unchanged; overrides are absolute, not percentages. */
+    public static String[] forCoop(String modDir, String libDir, int width, int height,
+                                   String player, String driver, String level, String mode, int size,
+                                   int team1, int team2, int tickets1, int tickets2) {
+        if (tickets1 < 0 || tickets1 > MAX_STARTING_TICKETS || tickets2 < 0 || tickets2 > MAX_STARTING_TICKETS)
+            throw new IllegalArgumentException("Use Map default or 1–9999 starting tickets for each team");
         if (team1 < 0 || team1 > MAX_COOP_BOTS || team2 < 0 || team2 > MAX_COOP_BOTS
                 || team1 + team2 > MAX_COOP_BOTS)
             throw new IllegalArgumentException("Use 0–63 bots total; one slot is reserved for you");
@@ -47,6 +58,8 @@ public final class GameLaunchPlan {
         List<String> args = host(modDir, libDir, width, height, player, driver, level, true, mode, size);
         add(args, "--team1-bots", Integer.toString(team1));
         add(args, "--team2-bots", Integer.toString(team2));
+        if (tickets1 != 0) add(args, "--tickets-team1", Integer.toString(tickets1));
+        if (tickets2 != 0) add(args, "--tickets-team2", Integer.toString(tickets2));
         return args.toArray(new String[0]);
     }
 

@@ -32,7 +32,7 @@ public final class LauncherActivity extends Activity {
     private final int[] bots = {8, 8};
     private EditText player, endpoint, gameKey;
     private CheckBox turnip, touch;
-    private Button deploy, mapPicker, sizePicker, finishMatch;
+    private Button deploy, mapPicker, sizePicker, finishMatch, ticketPicker;
     private final Button[] rosterButtons = new Button[4];
     private GameContent.Layout layout;
     private List<GameContent.Layout> sizeChoices = Collections.emptyList();
@@ -241,9 +241,103 @@ public final class LauncherActivity extends Activity {
         matchSize = text(roster, "", 13, MUTED, false);
         updateRoster();
         space(roster, 8);
+        ticketPicker = button(roster, "Starting tickets · Map default", this::chooseTickets, false);
+        ticketPicker.setContentDescription("Starting tickets");
+        ticketPicker.setTextSize(13);
+        ticketPicker.setEnabled(false);
         deploy = button(roster, "Deploy", () -> launch(Mode.COOP), true);
         finishMatch = button(roster, "End current match", this::endMatch, false);
         finishMatch.setVisibility(View.GONE);
+    }
+
+    private void updateTickets() {
+        if (ticketPicker == null) return;
+        ticketPicker.setEnabled(selected != null && layout != null);
+        String map = selected == null ? null : selected.id;
+        int first = OfflineTickets.read(prefs, map, 1), second = OfflineTickets.read(prefs, map, 2);
+        ticketPicker.setText(first == second ? "Starting tickets · " + OfflineTickets.label(first)
+                : "Tickets · T1 " + OfflineTickets.label(first) + " / T2 " + OfflineTickets.label(second));
+    }
+
+    private void chooseTickets() {
+        if (selected == null || layout == null) return;
+        final String map = selected.id;
+        final String title = selected.title;
+        LinearLayout box = column();
+        box.setBackgroundColor(INK);
+        box.setPadding(dp(14), dp(10), dp(14), dp(10));
+        text(box, title + " · All sizes", 16, GOLD, true);
+        text(box, "Offline starting tickets. Blank uses Map default.", 13, MUTED, false);
+        final EditText[] values = new EditText[2];
+        for (int i = 0; i < 2; i++) {
+            final int team = i + 1;
+            space(box, 8);
+            text(box, "Team " + team + " · " + side[i].getText(), 15, PAPER, true);
+            LinearLayout row = new LinearLayout(this);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            box.addView(row, -1, -2);
+            final EditText value = new EditText(this);
+            values[i] = value;
+            value.setSingleLine(true);
+            value.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+            value.setTextColor(PAPER);
+            value.setHintTextColor(MUTED);
+            value.setTextSize(15);
+            value.setHint("Map default");
+            value.setContentDescription("Team " + team + " starting tickets");
+            value.setSelectAllOnFocus(true);
+            int saved = OfflineTickets.read(prefs, map, team);
+            value.setText(saved == 0 ? "" : Integer.toString(saved));
+            Button minus = button(row, "−100", () -> adjustTickets(value, -100), false);
+            minus.setContentDescription("Decrease team " + team + " tickets");
+            minus.setTextSize(13);
+            minus.setLayoutParams(new LinearLayout.LayoutParams(dp(56), dp(44)));
+            row.addView(value, new LinearLayout.LayoutParams(0, dp(48), 1));
+            Button plus = button(row, "+100", () -> adjustTickets(value, 100), false);
+            plus.setContentDescription("Increase team " + team + " tickets");
+            plus.setTextSize(13);
+            plus.setLayoutParams(new LinearLayout.LayoutParams(dp(56), dp(44)));
+            Button reset = button(row, "Default", () -> { value.setText(""); value.setError(null); }, false);
+            reset.setContentDescription("Use map default for team " + team);
+            reset.setTextSize(13);
+            reset.setLayoutParams(new LinearLayout.LayoutParams(dp(73), dp(44)));
+        }
+        space(box, 8);
+        button(box, "Set both from team 1", () -> {
+            values[1].setText(values[0].getText()); values[1].setError(null);
+        }, false);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(box);
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Starting tickets").setView(scroll)
+                .setPositiveButton("Save", null).setNegativeButton("Cancel", null)
+                .setNeutralButton("Map defaults", (ignored, which) -> {
+                    OfflineTickets.save(prefs, map, 0, 0); updateTickets();
+                }).create();
+        PadMenuFrame.show(dialog);
+        dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+            int[] count = new int[2];
+            for (int i = 0; i < 2; i++) {
+                try { count[i] = OfflineTickets.parse(values[i].getText().toString()); }
+                catch (IllegalArgumentException error) {
+                    values[i].setError(error.getMessage()); values[i].requestFocus(); return;
+                }
+            }
+            OfflineTickets.save(prefs, map, count[0], count[1]);
+            updateTickets();
+            status.setText("Starting tickets saved for " + title + " (next offline match).");
+            dialog.dismiss();
+        });
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).requestFocus();
+    }
+
+    private void adjustTickets(EditText value, int amount) {
+        try {
+            int current = OfflineTickets.parse(value.getText().toString());
+            if (current == 0 && amount < 0) return;
+            value.setText(Integer.toString(Math.max(1, Math.min(GameLaunchPlan.MAX_STARTING_TICKETS, current + amount))));
+            value.setError(null);
+        } catch (IllegalArgumentException error) { value.setError(error.getMessage()); }
     }
     private void adjust(int team, int step) {
         int count = bots[team] + step;
@@ -390,6 +484,7 @@ public final class LauncherActivity extends Activity {
         MapBriefing source = layout == null ? null : selected.sourceOf(layout);
         if (source == null || displayed != source) showBriefing(source);
         updateRoster();
+        updateTickets();
     }
     private String sizeLabel(GameContent.Layout item) {
         String kind = item.botsSupported ? "Bots supported" : "Solo exploration";
@@ -532,7 +627,8 @@ public final class LauncherActivity extends Activity {
                         throw new IOException("ServerArchives.con is missing. Import the complete installation.");
                     args = GameLaunchPlan.forCoop(mod.getPath(), libs.getPath(), width, height, name, driver, map,
                             layout.mode, layout.size, layout.botsSupported ? bots[0] : 0,
-                            layout.botsSupported ? bots[1] : 0);
+                            layout.botsSupported ? bots[1] : 0,
+                            OfflineTickets.read(prefs, map, 1), OfflineTickets.read(prefs, map, 2));
                     File source = selected.sourceOf(layout).modDirectory;
                     if (!source.equals(mod)) {
                         File installed = GameContent.mapPackDirectory(mod, prefs.getString("mapPack", ""));

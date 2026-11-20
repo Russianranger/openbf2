@@ -4,6 +4,7 @@
 #if defined(__ANDROID__) && !DEDICATED
 #include "AndroidUiState.h"
 #include "../GameServer/OfflineCoopBots.h"
+#include "../GameServer/OfflineTickets.h"
 #include "../GameServer/HostMapLayout.h"
 #include "../../IO/File/OfflineMapPack.h"
 #endif
@@ -698,6 +699,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 #include <dlfcn.h>
 #include <signal.h>
 #include <stdint.h>
+#include <ucontext.h>
 #include <unwind.h>
 #include <cstring>
 #include <unistd.h>
@@ -723,9 +725,58 @@ _Unwind_Reason_Code recordFrame(struct _Unwind_Context* context, void* argument)
     return _URC_NO_REASON;
 }
 
-void androidCrashHandler(int signal, siginfo_t* info, void*)
+// Write the interrupted registers before best-effort symbolization/unwinding: those
+// existing diagnostics use loader/stdio locks and are not async-signal-safe. This
+// fixed-buffer record uses only the supplied context and the signal-safe write call.
+void writeOriginalCrashContext(uintptr_t pc, uintptr_t lr)
 {
-    std::fprintf(stderr, "[CRASH] signal %d at %p thread %d\n", signal, info->si_addr, gettid());
+    char message[] = "[CRASH] original pc=0x0000000000000000 lr=0x0000000000000000\n";
+    const unsigned pcDigits = sizeof("[CRASH] original pc=0x") - 1;
+    const unsigned lrDigits = sizeof("[CRASH] original pc=0x0000000000000000 lr=0x") - 1;
+    const char digits[] = "0123456789abcdef";
+    for (unsigned i = 0; i < 16; ++i)
+    {
+        message[pcDigits + 15 - i] = digits[pc & 15];
+        message[lrDigits + 15 - i] = digits[lr & 15];
+        pc >>= 4;
+        lr >>= 4;
+    }
+    (void)write(STDERR_FILENO, message, sizeof(message) - 1);
+}
+
+void describeOriginalCrashAddress(const char* name, uintptr_t address)
+{
+    Dl_info where;
+    if (dladdr(reinterpret_cast<void*>(address), &where) && where.dli_fname)
+        std::fprintf(stderr, "[CRASH] original %s %s+0x%lx %s\n", name,
+            where.dli_fname, (unsigned long)(address - reinterpret_cast<uintptr_t>(where.dli_fbase)),
+            where.dli_sname ? where.dli_sname : "?");
+}
+
+void androidCrashHandler(int signal, siginfo_t* info, void* context)
+{
+#if defined(__aarch64__)
+    uintptr_t pc = 0, lr = 0;
+    if (context)
+    {
+        const ucontext_t* interrupted = static_cast<const ucontext_t*>(context);
+        pc = interrupted->uc_mcontext.pc;
+        lr = interrupted->uc_mcontext.regs[30];
+        writeOriginalCrashContext(pc, lr);
+    }
+#else
+    (void)context;
+#endif
+    std::fprintf(stderr, "[CRASH] signal %d at %p thread %d\n", signal, info ? info->si_addr : 0, gettid());
+#if defined(__aarch64__)
+    if (context)
+    {
+        // These are ELF-relative addresses when the loader can resolve them. The
+        // full raw LR above is preserved even if pointer authentication prevents lookup.
+        describeOriginalCrashAddress("pc", pc);
+        describeOriginalCrashAddress("lr", lr);
+    }
+#endif
     UnwindCursor cursor;
     cursor.count = 0;
     _Unwind_Backtrace(recordFrame, &cursor);
@@ -761,12 +812,16 @@ void installAndroidCrashReport()
 // working directory, a writable home, the log file and the engine's own command line.
 static std::string androidCommandLine(int argc, char** argv)
 {
-    // A new menu/join/base launch cannot inherit an earlier optional map overlay.
+    // A new launch cannot inherit the previous optional offline selections.
     unsetenv("BF2_PORT_MAP_PACK");
+    dice::hfe::offline_tickets::clear();
     std::string mod, width = "1280", height = "720", name, level, server, libraryDir, driver;
     std::string mapPack;
     int packArguments = 0, levelArguments = 0, sizeArguments = 0;
     bool incompletePackArgument = false;
+    std::string teamTickets[2];
+    int ticketArguments[2] = {0, 0};
+    bool incompleteTicketArgument = false;
     std::string team1Bots = "8", team2Bots = "8";
     std::string selectedMode, layoutSize = "16";
     bool hosted = false, menu = false, coop = false;
@@ -776,6 +831,14 @@ static std::string androidCommandLine(int argc, char** argv)
         if (option == "--hosted") { hosted = true; continue; }
         if (option == "--coop") { coop = true; continue; }
         if (option == "--menu") { menu = true; continue; }
+        if (option == "--tickets-team1" || option == "--tickets-team2")
+        {
+            const int team = option == "--tickets-team1" ? 0 : 1;
+            ++ticketArguments[team];
+            if (i + 1 >= argc) { incompleteTicketArgument = true; break; }
+            teamTickets[team] = argv[++i];
+            continue;
+        }
         if (option == "--map-pack")
         {
             ++packArguments;
@@ -798,6 +861,20 @@ static std::string androidCommandLine(int argc, char** argv)
         else if (option == "--team1-bots") team1Bots = value;
         else if (option == "--team2-bots") team2Bots = value;
         else if (option == "--cdkey") setenv("BF2_PORT_CDKEY", value, 1);
+    }
+    const bool customTickets = ticketArguments[0] || ticketArguments[1];
+    if (customTickets)
+    {
+        unsigned int parsed;
+        if (incompleteTicketArgument || ticketArguments[0] > 1 || ticketArguments[1] > 1 ||
+            menu || !hosted || !coop || !server.empty() ||
+            !dice::hfe::offline_maps::validLevel(level) ||
+            (ticketArguments[0] && !dice::hfe::offline_tickets::parse(teamTickets[0].c_str(), parsed)) ||
+            (ticketArguments[1] && !dice::hfe::offline_tickets::parse(teamTickets[1].c_str(), parsed)))
+        {
+            std::fprintf(stderr, "OpenBF2: starting tickets require a direct offline map and one value per team in 1..9999\n");
+            return std::string();
+        }
     }
     if (packArguments && (incompletePackArgument || packArguments != 1 || levelArguments != 1 ||
         sizeArguments != 1 || menu || !hosted || !coop || !server.empty() ||
@@ -945,6 +1022,9 @@ static std::string androidCommandLine(int argc, char** argv)
         std::fputs("sv.voipEnabled 0\nsv.serverPort 16567\nsv.internet 0\nsv.numPlayersNeededToStart 1\n", out);
         if (coop)
         {
+            // Stock Python scales defaults by this ratio, then derives warning
+            // thresholds. Exact starting values must enter that normal path once.
+            if (customTickets) std::fputs("sv.ticketRatio 100\n", out);
             dice::hfe::offline_coop::BotCounts counts;
             dice::hfe::offline_coop::readBotCounts(counts); // Validated above.
             std::fputs("sv.serverIP \"127.0.0.1\"\nsv.interfaceIP \"127.0.0.1\"\n"
@@ -979,6 +1059,14 @@ static std::string androidCommandLine(int argc, char** argv)
         line += " +joinServer " + server.substr(0, colon);
         if (colon != std::string::npos)
             line += " +port " + server.substr(colon + 1);
+    }
+    if (customTickets)
+    {
+        if (ticketArguments[0]) setenv("BF2_PORT_TEAM1_TICKETS", teamTickets[0].c_str(), 1);
+        if (ticketArguments[1]) setenv("BF2_PORT_TEAM2_TICKETS", teamTickets[1].c_str(), 1);
+        std::fprintf(stderr, "OpenBF2 offline: requested starting tickets team1=%s team2=%s\n",
+                     ticketArguments[0] ? teamTickets[0].c_str() : "map default",
+                     ticketArguments[1] ? teamTickets[1].c_str() : "map default");
     }
     return line;
 }

@@ -49,6 +49,7 @@
 #include "../Objects/Game/SupplyDepot.h"          // uFirstPreGame's direct depot reset
 #include "../GameServer/ServerVoteManager.h"      // updateKickPlayers - update's tail
 #include "../GameServer/ServerSettings.h"         // uEndGame / uFirstEndGame: roundsPerMap, endDelay, endOfRoundDelay
+#include "../GameServer/OfflineTickets.h"
 #include "../MapList.h"                           // loadNextLevel / calcNextMapIndex - mapList
 #include "../GameServer/AutoRecorder.h"           // restartMap's roundFinished hook
 #include "../GameEvents/EndOfRoundEvent.h"        // endGame's broadcast
@@ -2286,6 +2287,13 @@ unsigned int ServerGameLogic::getDefaultNumberOfTickets(unsigned int team)
     std::string mode;
     if (game)
         mode = game->getCurrentMapGameMode();
+    // [CHOSEN, not recovered] Feed the existing Python round initialization.
+    // It sets tickets and warning limits every round; later ticket losses still
+    // use the unchanged setters. An omitted team keeps its authored default.
+    unsigned int selectedTickets;
+    if (game && offline_tickets::readOverride(team, game->getCurrentMapName().c_str(),
+                                              mode.c_str(), game->getCurrentMapSize(), selectedTickets))
+        return selectedTickets;
     if (compareIgnoreCase(mode.c_str(), "gpm_coop") == 0) // if coop then force to 16
         return getDefaultNumberOfTicketsEx(16, team);
     return getDefaultNumberOfTicketsEx(game->getCurrentMapMaxPlayers(), team);

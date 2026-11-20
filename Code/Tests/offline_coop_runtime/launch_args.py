@@ -16,29 +16,55 @@ parser.add_argument("--runner", required=True)
 args = parser.parse_args()
 args.out.mkdir(parents=True, exist_ok=True)
 source = (args.source / "Code/BF2/Game/Main/BF2.cpp").read_text()
-def function(signature):
-    start = source.index(signature)
-    return source[start:source.index("\n}\n", start) + 3]
+tickets_source = (args.source / "Code/BF2/Game/GameLogic/ServerGameLogic.cpp").read_text()
+def function(signature, text=source):
+    start = text.index(signature)
+    return text[start:text.index("\n}\n", start) + 3]
 header = r'''
 #include <string>
 #include <vector>
+#include <map>
 #include <fstream>
 #include <iterator>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <strings.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <dlfcn.h>
 #include "Code/BF2/Game/GameServer/OfflineCoopBots.h"
 #include "Code/BF2/Game/GameServer/HostMapLayout.h"
+#define BF2_OFFLINE_TICKETS_TEST 1
+#include "Code/BF2/Game/GameServer/OfflineTickets.h"
 #define BF2_OFFLINE_MAP_PACK_TEST 1
 #include "Code/BF2/IO/File/OfflineMapPack.h"
 static std::string storage;
 static const char* SDL_GetAndroidExternalStoragePath() { return storage.c_str(); }
 static void installAndroidCrashReport() {}
 static void* adrenotools_open_libvulkan(int,int,int,const char*,const char*,const char*,int,int) { return 0; }
+// [TEMP] Only the game identity queries needed by the actual ticket getters.
+namespace offline_tickets = dice::hfe::offline_tickets;
+struct TicketGame {
+    std::string level="gulf_of_oman", mode="gpm_coop";
+    int size=64, maxPlayers=64;
+    const std::string& getCurrentMapName() const { return level; }
+    const std::string& getCurrentMapGameMode() const { return mode; }
+    int getCurrentMapSize() const { return size; }
+    int getCurrentMapMaxPlayers() const { return maxPlayers; }
+};
+static TicketGame ticketGame;
+static TicketGame* game=&ticketGame;
+static int compareIgnoreCase(const char* a,const char* b) { return strcasecmp(a,b); }
+static std::map<unsigned int,unsigned int> g_defaultTicketsBySize[3];
+struct ServerGameLogic {
+    unsigned int m_defaultNumberOfTickets[2]={0,0};
+    void setDefaultNumberOfTickets(unsigned int,unsigned int);
+    void setDefaultNumberOfTicketsEx(unsigned int,unsigned int,unsigned int);
+    unsigned int getDefaultNumberOfTicketsEx(unsigned int,unsigned int);
+    unsigned int getDefaultNumberOfTickets(unsigned int);
+};
 '''
 main = r'''
 static int checks = 0;
@@ -162,12 +188,70 @@ int main(int argc,char** argv) {
         check(!launch(packed).empty(),"valid pack can launch again");
         launch(next);check(!std::getenv("BF2_PORT_MAP_PACK"),"next menu/LAN/join/invalid request clears pack state");
     }
+    ServerGameLogic ticketLogic;
+    ticketLogic.setDefaultNumberOfTickets(1,111);ticketLogic.setDefaultNumberOfTickets(2,222);
+    check(ticketLogic.getDefaultNumberOfTickets(1)==111&&ticketLogic.getDefaultNumberOfTickets(2)==222,"flat asymmetric authored defaults");
+    for(unsigned size:{16u,32u,64u}) {
+        ticketLogic.setDefaultNumberOfTicketsEx(size,1,size*10);
+        ticketLogic.setDefaultNumberOfTicketsEx(size,2,size*15);
+    }
+    auto ticketBase=base;ticketBase.insert(ticketBase.end(),{"--hosted","--coop","--level","gulf_of_oman","--size","64",
+        "--team1-bots","0","--team2-bots","0"});
+    for(const char* mode:{"gpm_coop","sp1","gpm_cq"}) {
+        ticketGame.mode=mode;
+        const unsigned authoredSize=std::strcmp(mode,"gpm_coop")==0?16:64;
+        for(const auto& pair:std::vector<std::pair<std::string,std::string>>{{"",""},{"1",""},{"","9999"},{"200","450"},{"9999","1"}}) {
+            auto a=ticketBase;a.insert(a.end(),{"--mode",mode});
+            if(!pair.first.empty())a.insert(a.end(),{"--tickets-team1",pair.first});
+            if(!pair.second.empty())a.insert(a.end(),{"--tickets-team2",pair.second});
+            check(!launch(a).empty(),"valid per-team starting tickets launch");
+            check(ticketLogic.getDefaultNumberOfTickets(1)==(pair.first.empty()?authoredSize*10:std::stoul(pair.first)),"team1 override or authored default");
+            check(ticketLogic.getDefaultNumberOfTickets(2)==(pair.second.empty()?authoredSize*15:std::stoul(pair.second)),"team2 override or authored default");
+            check(ticketLogic.getDefaultNumberOfTicketsEx(64,1)==640&&ticketLogic.getDefaultNumberOfTicketsEx(64,2)==960,"underlying authored defaults remain unchanged");
+            check((read(storage+"/coop-settings.con").find("sv.ticketRatio 100\n")!=std::string::npos)==(!pair.first.empty()||!pair.second.empty()),"only custom starting counts pin the Python ratio");
+        }
+    }
+    ticketGame.mode="gpm_coop";
+    auto ticketed=ticketBase;ticketed.insert(ticketed.end(),{"--tickets-team1","321","--tickets-team2","654"});
+    check(!launch(ticketed).empty(),"prepare scoped ticket selection");
+    for(const char* flag:{"BF2_PORT_DIRECT_START","BF2_PORT_LOCAL_COOP"}) {
+        unsetenv(flag);check(ticketLogic.getDefaultNumberOfTickets(1)==160,"non-direct/non-offline runtime ignores override");setenv(flag,"1",1);
+    }
+    ticketGame.level="another_map";check(ticketLogic.getDefaultNumberOfTickets(1)==160,"another map cannot inherit tickets");ticketGame.level="gulf_of_oman";
+    ticketGame.size=32;check(ticketLogic.getDefaultNumberOfTickets(1)==160,"another size cannot inherit tickets");ticketGame.size=64;
+    ticketGame.mode="sp1";check(ticketLogic.getDefaultNumberOfTickets(1)==640,"another mode cannot inherit tickets");ticketGame.mode="gpm_coop";
+    check(ticketLogic.getDefaultNumberOfTickets(0)==0&&ticketLogic.getDefaultNumberOfTickets(3)==0,"invalid team indices remain rejected");
+    for(const char* value:{"","0","-1","+1","10000","999999999999999999999999999999"," 2","2 ","1.5","NaN","1e3"}) {
+        auto a=ticketBase;a.insert(a.end(),{"--tickets-team1",value});
+        check(launch(a).empty()&&!std::getenv("BF2_PORT_TEAM1_TICKETS")&&!std::getenv("BF2_PORT_TEAM2_TICKETS"),"invalid count rejects and clears both ticket selections");
+    }
+    for(const auto& extra:std::vector<std::vector<std::string>>{{"--tickets-team1","2"},{"--tickets-team2","3"},{"--tickets-team2"},{"--menu"},{"--connect","127.0.0.1"}}) {
+        auto a=ticketed;a.insert(a.end(),extra.begin(),extra.end());
+        check(launch(a).empty(),"duplicate/missing/foreign-scope ticket request rejected");
+    }
+    for(const auto& next:std::vector<std::vector<std::string>>{menu,lan,join,ticketBase,noSize}) {
+        check(!launch(ticketed).empty(),"valid tickets can launch again");launch(next);
+        check(!std::getenv("BF2_PORT_TEAM1_TICKETS")&&!std::getenv("BF2_PORT_TEAM2_TICKETS"),"next default/menu/LAN/join/invalid launch clears overrides");
+    }
+    for(const auto& foreign:std::vector<std::vector<std::string>>{menu,lan,join}) {
+        auto a=foreign;a.insert(a.end(),{"--tickets-team1","200"});check(launch(a).empty(),"ticket option forbidden outside direct offline deployment");
+    }
+    auto packedTickets=packed;packedTickets.insert(packedTickets.end(),{"--tickets-team2","890"});
+    ticketGame.level="strike_at_karkand";
+    check(!launch(packedTickets).empty()&&ticketLogic.getDefaultNumberOfTickets(2)==890,"map pack retains exact ticket selection");
+    offline_tickets::clear();
+    check(ticketLogic.getDefaultNumberOfTickets(1)==160&&ticketLogic.getDefaultNumberOfTickets(2)==240,"game shutdown clears overrides and restores asymmetric defaults");
     std::printf("PASS %d production Android launch/config checks\n",checks);
 }
 '''
 generated = args.out / "launch_args.cpp"
 generated.write_text(header + function("static void appendCommandLineArg(") +
-                     function("static std::string androidCommandLine(") + main)
+                     function("static std::string androidCommandLine(") +
+                     ''.join(function(signature,tickets_source) for signature in (
+                         "void ServerGameLogic::setDefaultNumberOfTickets(",
+                         "void ServerGameLogic::setDefaultNumberOfTicketsEx(",
+                         "unsigned int ServerGameLogic::getDefaultNumberOfTicketsEx(",
+                         "unsigned int ServerGameLogic::getDefaultNumberOfTickets(")) + main)
 binary = args.out / "launch_args"
 subprocess.run([args.compiler, "-std=c++14", "-O1", "-I" + str(args.source), str(generated), "-o", str(binary)], check=True)
 subprocess.run([args.runner, str(binary), str(args.out)], check=True)

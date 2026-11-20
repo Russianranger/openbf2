@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="io.github.russianranger.openbf2" android:versionCode="5" android:versionName="0.1.4">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="io.github.russianranger.openbf2" android:versionCode="6" android:versionName="0.1.5">
     <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="33"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
@@ -9,6 +9,8 @@
     <application
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:label="OpenBF2"
+        android:icon="@mipmap/bf2_launcher"
+        android:roundIcon="@mipmap/bf2_launcher"
         android:hasCode="true"
         android:allowBackup="false"
         android:extractNativeLibs="true">

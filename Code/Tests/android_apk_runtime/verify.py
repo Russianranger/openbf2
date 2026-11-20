@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 import zipfile
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -26,7 +27,7 @@ parser.add_argument("--out", type=Path, required=True)
 parser.add_argument("--ndk", type=Path, required=True)
 parser.add_argument("--build-tools", type=Path, required=True)
 parser.add_argument("--runner", type=Path, required=True)
-parser.add_argument("--version-code", default="5")
+parser.add_argument("--version-code", help="Expected version code (defaults to the source manifest)")
 parser.add_argument("--stock-objects", type=Path)
 parser.add_argument("--host-build", type=Path)
 parser.add_argument("--renderer-build", type=Path)
@@ -41,6 +42,8 @@ libs.mkdir(exist_ok=True)
 if any(libs.iterdir()):
     raise SystemExit("Use a fresh output directory: extracted libraries already exist")
 source = args.source
+manifest = ET.parse(source / "android/thor/AndroidManifest.xml").getroot()
+expected_version = args.version_code or manifest.attrib["{http://schemas.android.com/apk/res/android}versionCode"]
 compiler = (
     args.ndk
     / "toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++"
@@ -88,7 +91,7 @@ match = re.search(
 assert (
     match
     and match.group(1) == "io.github.russianranger.openbf2"
-    and match.group(2) == args.version_code
+    and match.group(2) == expected_version
 ), identity[:500]
 report["package"], report["version_code"], report["version_name"] = match.groups()
 signature = command(
@@ -189,6 +192,12 @@ run_check(
 run_check(
     "native-ui-flash",
     [["bash", source / "Code/Tests/android_ui_runtime/run.sh", libs, libs, out / "ui"]],
+)
+run_check(
+    "packaged-offline-tickets",
+    [[sys.executable, source / "Code/Tests/android_apk_runtime/tickets.py",
+      "--source", source, "--ndk", args.ndk, "--library", libs / "libmain.so",
+      "--out", out / "tickets", "--runner", args.runner]],
 )
 common = [
     compiler,

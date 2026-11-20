@@ -35,6 +35,38 @@ public final class LaunchPlanTest {
                 "Player", "turnip", "127.0.0.1", 16567));
         if (lan.contains("--hosted") || lan.contains("--coop") || !lan.contains("127.0.0.1:16567"))
             throw new AssertionError(lan);
+        for (String[] noOverride : new String[][] {
+                coop.toArray(new String[0]), lan.toArray(new String[0]),
+                GameLaunchPlan.forMenu("/game/mods/bf2", "/native", 1920, 1080, "Player", "system"),
+                GameLaunchPlan.forHost("/game/mods/bf2", "/native", 1920, 1080,
+                        "Player", "system", "strike_at_karkand", false, 64)}) {
+            for (String arg : noOverride) if (arg.startsWith("--tickets-"))
+                throw new AssertionError("Default/menu/LAN inherited ticket overrides");
+        }
+        int ticketCases = 0;
+        for (String mode : new String[]{"gpm_coop", "sp1", "gpm_cq"}) {
+            for (int first : new int[]{0, 1, 100, 9999}) for (int second : new int[]{0, 1, 200, 9999}) {
+                List<String> exact = Arrays.asList(GameLaunchPlan.forCoop("/game/mods/bf2", "/native", 1920, 1080,
+                        "Player", "system", "strike_at_karkand", mode, 64, 0, 0, first, second));
+                for (int team = 1; team <= 2; team++) {
+                    int expected = team == 1 ? first : second;
+                    int flag = exact.indexOf("--tickets-team" + team);
+                    if (expected == 0 ? flag != -1 : flag == -1 || !Integer.toString(expected).equals(exact.get(flag+1)))
+                        throw new AssertionError(exact);
+                }
+                ticketCases++;
+            }
+        }
+        for (int invalid : new int[]{-1, 10000, Integer.MIN_VALUE, Integer.MAX_VALUE}) {
+            for (int team = 1; team <= 2; team++) {
+                try {
+                    GameLaunchPlan.forCoop("/game/mods/bf2", "/native", 1920, 1080,
+                            "Player", "system", "strike_at_karkand", "gpm_coop", 16, 8, 8,
+                            team == 1 ? invalid : 0, team == 2 ? invalid : 0);
+                    throw new AssertionError("Accepted invalid ticket count " + invalid);
+                } catch (IllegalArgumentException expected) { }
+            }
+        }
         for (int size : new int[]{16,32,64}) {
             for (String mode : new String[]{"gpm_coop", "sp1", "gpm_cq"}) {
                 List<String> layout = Arrays.asList(GameLaunchPlan.forCoop("/game/mods/bf2", "/native", 1920, 1080,
@@ -68,6 +100,7 @@ public final class LaunchPlanTest {
                 if (!GameContent.hasCoop(GameContent.child(levels, name))) throw new AssertionError(name);
             }
         }
-        System.out.println("Launch plan: " + cases + " exact rosters, invalid bounds and LAN isolation passed");
+        System.out.println("Launch plan: " + cases + " exact rosters, " + ticketCases
+                + " ticket combinations, invalid bounds and LAN isolation passed");
     }
 }
