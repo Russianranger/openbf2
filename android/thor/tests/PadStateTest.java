@@ -20,5 +20,15 @@ public final class PadStateTest {
         check(PadState.rightAxis(false,false,true) == 1);
         check(PadState.rightAxis(true,false,true) == 1);
         check(PadState.rightAxis(true,true,true) == 0);
+        log.setLength(0); pad.accept(7,true);
+        pad.bindTrigger(14,-1,.8f); pad.bindTrigger(14,-1,.35f);
+        check(log.toString().equals("-1+"));
+        pad.changeContext(); pad.bindTrigger(14,-1,.8f);
+        check(log.toString().equals("-1+-1-"));
+        pad.bindTrigger(14,-1,.35f); pad.bindTrigger(14,-1,0);
+        pad.bindTrigger(14,-1,.8f); pad.reset();
+        check(log.toString().equals("-1+-1--1+-1-"));
+        check(PadState.stick(.12f,.16f)==0 && PadState.stick(Float.NaN,.16f)==0);
+        check(PadState.stick(.25f,.16f)==.25f && PadState.stick(2,.16f)==1);
     }
 }

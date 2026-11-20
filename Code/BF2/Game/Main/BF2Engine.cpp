@@ -3,6 +3,10 @@
 // Coordinates startup, the frame loop and shutdown. Preserve the explicit retail Debug line numbers.
 
 #include "BF2Engine.h"
+#if defined(__ANDROID__) && !DEDICATED
+#include "AndroidUiState.h"
+#include "../../PortShim/AndroidPresentationGate.h"
+#endif
 #include "BF2EngineSetup.h"
 #include "BF2Log.h"                         // [INFERRED] path; Game/Main/BF2Log.cpp is attested
 #include "BF2Console.h"                     // [INFERRED] path
@@ -1053,6 +1057,9 @@ bool BF2Engine::parseParameters(const std::string& commandLine)
 void BF2Engine::shutdownGame(bool activateMenuAfter)   // bool from BF2.exe 0x403C50: whether the
                                                        //   menu comes back afterwards (see the tail); never read on a server
 {
+#if defined(__ANDROID__) && !DEDICATED
+    androidui::publish(androidui::Menu);
+#endif
     if (!game)                                  // /0x8138017 -> straight to the epilogue
         return;
 
@@ -1194,6 +1201,10 @@ bool BF2Engine::startGame(bool noAutoJoin, bool startFromMenu)   // 2nd bool fro
     }
 #endif
 
+#if defined(__ANDROID__) && !DEDICATED
+    // [CHOSEN, not recovered] Keep Android responsive while synchronous native loading blocks.
+    androidui::StartAttempt androidStart;
+#endif
 #if !DEDICATED && !defined(_WIN32)
     // [CHOSEN, not recovered] [RETIRE-WHEN: portable-swiff-player] A direct start skips the
     // profile login that loads the control maps, so take the mod's defaults here.
@@ -1284,6 +1295,9 @@ bool BF2Engine::startGame(bool noAutoJoin, bool startFromMenu)   // 2nd bool fro
         const int joinResult = gameClient->joinServer(joinAddress, port, password, 5.0f, clPunkBuster);
         if (joinResult == 1)
         {
+#if defined(__ANDROID__) && !DEDICATED
+            androidStart.awaitFrame();
+#endif
 #if !DEDICATED
             static_cast<ui::ISwiffHost*>(classManager->getSingleton("SwiffHost"))->setJoinPassword(std::string(""));   // +0x184, BF2.exe 0x404AA0
 #endif
@@ -1329,6 +1343,9 @@ bool BF2Engine::startGame(bool noAutoJoin, bool startFromMenu)   // 2nd bool fro
 
     if (!ok)
         shutdownGame(false);                            // second argument = 0
+#if defined(__ANDROID__) && !DEDICATED
+    if (ok) androidStart.awaitFrame();
+#endif
     return ok;                                          // > movzx edx, var_192
 }
 
@@ -1596,22 +1613,31 @@ static float* const s_sleepOverheadTime =                       // [INFERRED] na
 
 #if defined(__ANDROID__) && !DEDICATED
 // Read UI-owned game objects only on the engine thread. Android's main thread sees just the flag.
-static std::atomic<bool> s_androidControllerPointer(false);
+extern "C" bool portablePointerMode();
+extern "C" void portableSetPointerMode(bool enabled);
 extern "C" JNIEXPORT jboolean JNICALL Java_com_mackillergr_bf2_HandheldInput_pointerShown(JNIEnv*, jclass)
 {
-    return s_androidControllerPointer.load(std::memory_order_relaxed);
+    return portablePointerMode();
 }
 #endif
 
 bool BF2Engine::mainLoop()
 {
-#if defined(__ANDROID__) && !DEDICATED
-    s_androidControllerPointer.store(menuLogic || (hudManager && hudManager->isPointerEnabled()),
-                                    std::memory_order_relaxed);
-#endif
-    // Runs one frame per call. A pending quit returns false before any frame work.
+    // A pending quit takes precedence even while a surface is being replaced.
     if (quitNextFrameFlag)
         return false;
+#if defined(__ANDROID__) && !DEDICATED
+    if (!isDedicated() && !portablePresentationReady()) {
+        // Continue SDL lifecycle/quit handling while suppressing new simulation/render frames.
+        // SDL normally blocks its event pump until the activity and drawing surface resume.
+        bf2->handleInGameWinMessages();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        return true;
+    }
+    portableSetPointerMode(menuLogic || (hudManager && hudManager->isPointerEnabled()));
+    androidui::frame(moviePlayer != nullptr, moviePlayer && movieFlag != 1, menuLogic != nullptr,
+                     gameLogic && gameLogic->isLevelLoaded(), game != nullptr);
+#endif
 
     // : the idle throttle. The binary does `if (!byte52) usleep(100000);` - a flat 100 ms
     // (imm 0x186A0 at 0x8137A80), NOT derived from a getter. byte52 (+0x52) is set from a handleEvent

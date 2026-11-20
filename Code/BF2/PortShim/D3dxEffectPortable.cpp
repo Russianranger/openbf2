@@ -20,6 +20,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -370,6 +371,12 @@ public:
     Technique* current = nullptr;
     Pass* activePass = nullptr;
     std::set<string> warned;
+    // [CHOSEN, not recovered] Track effect-owned values, not device state: the render queue
+    // may override the latter between BeginPass and CommitChanges.
+    using StateKey = std::tuple<unsigned, unsigned, unsigned>; // kind, stage, state/register
+    using StateValues = std::map<StateKey, std::vector<unsigned char>>;
+    StateValues passValues, appliedPassValues;
+    bool collectingPassValues = false;
 
     explicit Effect(IDirect3DDevice9* d) : vtable(effectVtable()), device(d) {}
 
@@ -394,6 +401,8 @@ public:
     bool buildPass(Pass* pass);
     Shader* resolve(const ShaderRef& ref);
     void applyPass(Pass* pass);
+    void applyPassStates(Pass* pass);
+    bool collectPassValue(unsigned kind, unsigned stage, unsigned id, const void* data, size_t bytes);
     void uploadConstants(Pass* pass);
     void uploadOne(Shader* shader);
     void applySampler(Param* sampler, unsigned stage);
@@ -1273,24 +1282,28 @@ R managerCall(void* manager, unsigned slot, A... args)
 
 void Effect::setRenderState(unsigned id, unsigned value)
 {
+    if (collectPassValue(0, 0, id, &value, sizeof(value))) return;
     if (stateManager) managerCall<long>(stateManager, 7, id, value);
     else device->SetRenderState(static_cast<D3DRENDERSTATETYPE>(id), value);
 }
 
 void Effect::setStageState(unsigned stage, unsigned id, unsigned value)
 {
+    if (collectPassValue(1, stage, id, &value, sizeof(value))) return;
     if (stateManager) managerCall<long>(stateManager, 9, stage, id, value);
     else device->SetTextureStageState(stage, static_cast<D3DTEXTURESTAGESTATETYPE>(id), value);
 }
 
 void Effect::setSamplerState(unsigned stage, unsigned id, unsigned value)
 {
+    if (collectPassValue(2, stage, id, &value, sizeof(value))) return;
     if (stateManager) managerCall<long>(stateManager, 10, stage, id, value);
     else device->SetSamplerState(stage, static_cast<D3DSAMPLERSTATETYPE>(id), value);
 }
 
 void Effect::setTexture(unsigned stage, IDirect3DBaseTexture9* texture)
 {
+    if (collectPassValue(3, stage, 0, &texture, sizeof(texture))) return;
     if (stateManager) managerCall<long>(stateManager, 8, stage, texture);
     else device->SetTexture(stage, texture);
 }
@@ -1304,6 +1317,7 @@ void Effect::setShader(bool pixel, void* object)
 
 void Effect::setConstantsF(bool pixel, unsigned reg, const float* data, unsigned count)
 {
+    if (collectPassValue(pixel ? 5 : 4, 0, reg, data, count * 4 * sizeof(float))) return;
     if (stateManager) managerCall<long>(stateManager, pixel ? 18 : 14, reg, data, count);
     else if (pixel) device->SetPixelShaderConstantF(reg, data, count);
     else device->SetVertexShaderConstantF(reg, data, count);
@@ -1481,9 +1495,18 @@ void Effect::uploadConstants(Pass* pass)
             if (shader->state > 0) uploadOne(shader);
 }
 
-void Effect::applyPass(Pass* pass)
+bool Effect::collectPassValue(unsigned kind, unsigned stage, unsigned id, const void* data, size_t bytes)
 {
-    buildPass(pass);
+    if (!collectingPassValues) return false;
+    auto& value = passValues[StateKey(kind, stage, id)];
+    value.resize(bytes);
+    std::memcpy(value.data(), data, bytes);
+    return true;
+}
+
+void Effect::applyPassStates(Pass* pass)
+{
+    collectingPassValues = true;
     for (const StateAssign& state : pass->states)
     {
         if (state.name == "sampler")
@@ -1552,6 +1575,43 @@ void Effect::applyPass(Pass* pass)
         else if (info->second.kind == 1) setStageState(stage, info->second.id, value);
         else setSamplerState(stage, info->second.id, value);
     }
+    collectingPassValues = false;
+    // Resolve the complete pass first, so the final assignment to a repeated state wins.
+    // Only changed effect values are committed. Replaying literal/unchanged values here
+    // would erase the transparent queue's explicit alpha/depth overrides.
+    for (const auto& entry : passValues)
+    {
+        auto& applied = appliedPassValues[entry.first];
+        if (applied == entry.second) continue;
+        const unsigned kind = std::get<0>(entry.first);
+        const unsigned stage = std::get<1>(entry.first), id = std::get<2>(entry.first);
+        if (kind == 3)
+        {
+            IDirect3DBaseTexture9* texture = nullptr;
+            std::memcpy(&texture, entry.second.data(), sizeof(texture));
+            setTexture(stage, texture);
+        }
+        else if (kind >= 4)
+            setConstantsF(kind == 5, id, reinterpret_cast<const float*>(entry.second.data()),
+                          static_cast<unsigned>(entry.second.size() / (4 * sizeof(float))));
+        else
+        {
+            unsigned value = 0;
+            std::memcpy(&value, entry.second.data(), sizeof(value));
+            if (kind == 0) setRenderState(id, value);
+            else if (kind == 1) setStageState(stage, id, value);
+            else setSamplerState(stage, id, value);
+        }
+        applied = entry.second;
+    }
+}
+
+void Effect::applyPass(Pass* pass)
+{
+    buildPass(pass);
+    passValues.clear();
+    appliedPassValues.clear();
+    applyPassStates(pass);
     if (pass->vertex.present)
     {
         Shader* const shader = resolve(pass->vertex);
@@ -1956,7 +2016,11 @@ long fxBeginPass(void* e, unsigned index)
 long fxCommitChanges(void* e)
 {
     Effect* const fx = self(e);
-    if (fx->activePass) fx->uploadConstants(fx->activePass);
+    if (fx->activePass)
+    {
+        fx->applyPassStates(fx->activePass);
+        fx->uploadConstants(fx->activePass);
+    }
     return kOk;
 }
 

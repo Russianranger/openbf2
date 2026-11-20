@@ -1,6 +1,9 @@
 // Application entry points and engine-facade lifecycle. [INFERRED] source placement.
 
 #include "BF2.h"
+#if defined(__ANDROID__) && !DEDICATED
+#include "AndroidUiState.h"
+#endif
 
 #include "BF2Engine.h"                              // [INFERRED] path: Game/Main/BF2Engine.cpp is
                                                     // attested, so a matching header is assumed.
@@ -899,11 +902,23 @@ static std::string androidCommandLine(int argc, char** argv)
 
 #if defined(__ANDROID__)
 extern "C" void portableToggleKeyboard();
+extern "C" bool portablePointerMode();
+
+// [CHOSEN, not recovered] Read atomically published loading/movie state on Android's UI thread.
+extern "C" JNIEXPORT jint JNICALL Java_com_mackillergr_bf2_AndroidUiState_nativeSnapshot(JNIEnv*, jclass)
+{
+    return dice::hfe::androidui::snapshot();
+}
+extern "C" JNIEXPORT jstring JNICALL Java_com_mackillergr_bf2_AndroidUiState_nativeLevel(JNIEnv* env, jclass)
+{
+    const std::string level = dice::hfe::androidui::level();
+    return env->NewStringUTF(level.c_str());
+}
 
 // The touch overlay stands aside while the Flash menu is up, and asks for the keyboard there.
 extern "C" JNIEXPORT jboolean JNICALL Java_com_mackillergr_bf2_TouchOverlay_menuShown(JNIEnv*, jclass)
 {
-    return dice::hfe::menuLogic != 0;
+    return portablePointerMode();
 }
 extern "C" JNIEXPORT void JNICALL Java_com_mackillergr_bf2_TouchOverlay_toggleKeyboard(JNIEnv*, jclass)
 {
@@ -927,6 +942,9 @@ int main(int argc, char** argv)
         appendCommandLineArg(commandLine, argv[i], i == 1);
 #endif
     const int result = dice::hfe::bf2Main(0, 0, const_cast<char*>(commandLine.c_str()));
+#if defined(__ANDROID__)
+    dice::hfe::androidui::publish(dice::hfe::androidui::Menu);
+#endif
     if (dice::hfe::g_system)
         delete dice::hfe::g_system;
     return result;

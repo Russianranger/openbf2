@@ -5,6 +5,7 @@ import android.content.Context;
 import android.hardware.input.InputManager;
 import android.view.Choreographer;
 import android.view.InputDevice;
+import android.view.InputEvent;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import org.libsdl.app.SDLActivity;
@@ -17,7 +18,7 @@ final class HandheldInput implements Choreographer.FrameCallback, InputManager.I
     private final PadState held = new PadState(this::emit);
     private int width, height;
     private float lookX, lookY, x, y;
-    private boolean framePending, menu;
+    private boolean framePending, menu, controllerPresent;
     private int mouseButtons;
     private long previousFrame;
 
@@ -25,6 +26,7 @@ final class HandheldInput implements Choreographer.FrameCallback, InputManager.I
         this.activity = activity;
         devices = (InputManager) activity.getSystemService(Context.INPUT_SERVICE);
         devices.registerInputDeviceListener(this, null);
+        refreshDevices();
         resize();
     }
     private void resize() {
@@ -35,22 +37,52 @@ final class HandheldInput implements Choreographer.FrameCallback, InputManager.I
         y = height > 0 ? y * h / height : h / 2f;
         width = w; height = h;
     }
-    @Override public void onInputDeviceAdded(int id) {}
+    private void refreshDevices() {
+        controllerPresent = false;
+        for (int id : devices.getInputDeviceIds()) {
+            InputDevice d = devices.getInputDevice(id);
+            if (d != null && (d.supportsSource(InputDevice.SOURCE_GAMEPAD) || d.supportsSource(InputDevice.SOURCE_JOYSTICK))) {
+                controllerPresent = true;
+                break;
+            }
+        }
+    }
+    @Override public void onInputDeviceAdded(int id) { refreshDevices(); }
     @Override public void onInputDeviceChanged(int id) { onInputDeviceRemoved(id); }
-    @Override public void onInputDeviceRemoved(int id) { if (held.isDevice(id)) reset(); }
+    @Override public void onInputDeviceRemoved(int id) { if (held.isDevice(id)) reset(); refreshDevices(); }
     void close() { reset(); devices.unregisterInputDeviceListener(this); }
     private void syncMode() {
         boolean visible = menu();
         if (visible != menu) {
-            reset(); // Release buttons in their original input context.
+            held.changeContext(); // Release in the original context; require release before rebinding.
+            stopMotion();
             menu = visible;
+            if (menu && controllerPresent) {
+                resize();
+                SDLActivity.onNativeMouse(0, MotionEvent.ACTION_MOVE, x, y, false);
+            }
         }
         if (menu) resize();
+    }
+    boolean cursorVisible() { syncMode(); return menu && controllerPresent; }
+    float cursorFractionX() { return width > 0 ? x / width : .5f; }
+    float cursorFractionY() { return height > 0 ? y / height : .5f; }
+    void setPointerFraction(float nx, float ny) {
+        resize();
+        x = Math.max(0, Math.min(width - 1, nx * width));
+        y = Math.max(0, Math.min(height - 1, ny * height));
     }
     private static native boolean pointerShown();
     private boolean menu() {
         try { return pointerShown(); }
         catch (UnsatisfiedLinkError unavailable) { return false; }
+    }
+    static boolean controller(InputEvent e) {
+        if (e.isFromSource(InputDevice.SOURCE_GAMEPAD) || e.isFromSource(InputDevice.SOURCE_JOYSTICK)) return true;
+        // Some handheld drivers label button events as KEYBOARD/DPAD even though
+        // the originating input device advertises its gamepad axes separately.
+        InputDevice d = e.getDevice();
+        return d != null && (d.supportsSource(InputDevice.SOURCE_GAMEPAD) || d.supportsSource(InputDevice.SOURCE_JOYSTICK));
     }
     private void emit(int key, boolean down) {
         if (key == LEFT || key == RIGHT) {
@@ -62,7 +94,8 @@ final class HandheldInput implements Choreographer.FrameCallback, InputManager.I
         else SDLActivity.onNativeKeyUp(key);
     }
     boolean key(KeyEvent e) {
-        if (!e.isFromSource(InputDevice.SOURCE_GAMEPAD) && !e.isFromSource(InputDevice.SOURCE_JOYSTICK)) return false;
+        if (!controller(e)) return false;
+        if (e.getAction() != KeyEvent.ACTION_DOWN && e.getAction() != KeyEvent.ACTION_UP) return false;
         syncMode();
         int value;
         switch (e.getKeyCode()) {
@@ -90,7 +123,7 @@ final class HandheldInput implements Choreographer.FrameCallback, InputManager.I
         InputDevice.MotionRange fromSource = d.getMotionRange(axis, e.getSource());
         return fromSource == null ? d.getMotionRange(axis) : fromSource;
     }
-    private static int rightAxis(MotionEvent e, int primary, int alternate) {
+    static int rightAxis(MotionEvent e, int primary, int alternate) {
         InputDevice.MotionRange a = range(e, primary), b = range(e, alternate);
         return PadState.rightAxis(a != null, a != null && a.getMin() < 0, b != null)
                 == 0 ? primary : alternate;
@@ -99,35 +132,43 @@ final class HandheldInput implements Choreographer.FrameCallback, InputManager.I
         InputDevice.MotionRange r = range(e, axis);
         return r == null ? 0 : PadState.trigger(e.getAxisValue(axis), r.getMin(), r.getMax());
     }
-    private static float trigger(MotionEvent e, int axis, int alias, int legacy, int usedLookAxis) {
+    static float trigger(MotionEvent e, int axis, int alias, int legacy, int usedLookAxis) {
         float value = Math.max(triggerAxis(e, axis), triggerAxis(e, alias));
         return legacy == usedLookAxis ? value : Math.max(value, triggerAxis(e, legacy));
     }
-    private static float deadzone(float v) { return Math.abs(v) < .16f ? 0f : v; }
+    static float stick(MotionEvent e, int axis) {
+        InputDevice.MotionRange r = range(e, axis);
+        return PadState.stick(e.getAxisValue(axis), r == null ? .16f : Math.max(.16f, r.getFlat()));
+    }
     boolean motion(MotionEvent e) {
-        if (!e.isFromSource(InputDevice.SOURCE_JOYSTICK) || e.getActionMasked() != MotionEvent.ACTION_MOVE) return false;
+        if (!controller(e)) return false;
+        if (e.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+            if (held.isDevice(e.getDeviceId())) reset();
+            return true;
+        }
+        if (e.getActionMasked() != MotionEvent.ACTION_MOVE) return false;
         syncMode();
         float leftX = e.getAxisValue(MotionEvent.AXIS_X), leftY = e.getAxisValue(MotionEvent.AXIS_Y);
         int rightHorizontal = rightAxis(e, MotionEvent.AXIS_Z, MotionEvent.AXIS_RX);
         int rightVertical = rightAxis(e, MotionEvent.AXIS_RZ, MotionEvent.AXIS_RY);
-        float mx = deadzone(e.getAxisValue(rightHorizontal)), my = deadzone(e.getAxisValue(rightVertical));
+        float mx = stick(e, rightHorizontal), my = stick(e, rightVertical);
         float rt = trigger(e, MotionEvent.AXIS_RTRIGGER, MotionEvent.AXIS_GAS, MotionEvent.AXIS_RZ, rightVertical);
         float lt = trigger(e, MotionEvent.AXIS_LTRIGGER, MotionEvent.AXIS_BRAKE, MotionEvent.AXIS_Z, rightHorizontal);
         boolean deliberate = Math.abs(leftX) > .30f || Math.abs(leftY) > .30f ||
-                Math.abs(mx) > .30f || Math.abs(my) > .30f || rt > .40f || lt > .40f;
+                mx != 0 || my != 0 || rt > .40f || lt > .40f;
         if (!held.isDevice(e.getDeviceId()) && deliberate) stopMotion();
         if (!held.accept(e.getDeviceId(), deliberate)) return true;
         held.bind(-10, KeyEvent.KEYCODE_A, !menu && leftX < -0.30f);
         held.bind(-11, KeyEvent.KEYCODE_D, !menu && leftX > 0.30f);
         held.bind(-12, KeyEvent.KEYCODE_W, !menu && leftY < -0.30f);
         held.bind(-13, KeyEvent.KEYCODE_S, !menu && leftY > 0.30f);
-        held.bind(-14, LEFT, rt > 0.40f);
-        held.bind(-15, RIGHT, lt > 0.40f);
+        held.bindTrigger(-14, LEFT, rt);
+        held.bindTrigger(-15, RIGHT, lt);
         lookX = mx;
         lookY = my;
         if (menu && lookX == 0 && lookY == 0) {
-            lookX = Math.abs(leftX) > 0.16f ? leftX : 0;
-            lookY = Math.abs(leftY) > 0.16f ? leftY : 0;
+            lookX = stick(e, MotionEvent.AXIS_X);
+            lookY = stick(e, MotionEvent.AXIS_Y);
         }
         if ((lookX != 0 || lookY != 0) && !framePending) {
             framePending = true; previousFrame = 0; Choreographer.getInstance().postFrameCallback(this);

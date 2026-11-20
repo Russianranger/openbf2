@@ -11,6 +11,9 @@
 #include "RendDX9Base.h"
 
 #include <cstring>
+#if defined(__ANDROID__)
+#include "../PortShim/AndroidPresentationGate.h"
+#endif
 
 namespace dice {
 namespace hfe {
@@ -70,6 +73,18 @@ unsigned char statsSwapEnabled(unsigned char value)
 }
 
 
+// A surface teardown closes the shared gate before SDL releases its ANativeWindow. Keep the
+// guard around the synchronous DXVK call only, never its event pump or lost-device recovery.
+static bool presentChain(IDirect3DSwapChain9* chain, unsigned int mode, HRESULT& result)
+{
+#if defined(__ANDROID__)
+    if (!portableBeginPresent()) return false;
+    struct Release { ~Release() { portableEndPresent(); } } release;
+#endif
+    result = chain->Present(0, 0, 0, 0, mode);
+    return true;
+}
+
 // Presents the active swap chain. Mode 3 only marks it presented; mode 2 uses default flags.
 // Device loss and driver errors attempt restoration but still fail this frame; only
 // device loss clears in-scene state. Retry policy depends on the HRESULT and spin flag.
@@ -91,7 +106,8 @@ bool rendererPresent(unsigned int mode)
     IDirect3DSwapChain9** chains = reinterpret_cast<IDirect3DSwapChain9**>(b->swapChainFirst);
     IDirect3DSwapChain9* chain = chains[b->swapChainIndex];
 
-    HRESULT hr = chain->Present(0, 0, 0, 0, mode);
+    HRESULT hr;
+    if (!presentChain(chain, mode, hr)) return false;
 #if defined(__ANDROID__)
     {
         // A phone has no debugger attached: the exported log has to show the loop is alive.
@@ -135,7 +151,7 @@ bool rendererPresent(unsigned int mode)
         }
         chains = reinterpret_cast<IDirect3DSwapChain9**>(b->swapChainFirst);
         chain  = chains[b->swapChainIndex];
-        hr = chain->Present(0, 0, 0, 0, mode);
+        if (!presentChain(chain, mode, hr)) return false;
         if (!hr)
             break;
     }
@@ -150,6 +166,9 @@ bool rendererPresent(unsigned int mode)
 
 bool rendererBeginScene(const unsigned int* clearRgb, bool doClear)
 {
+#if defined(__ANDROID__)
+    if (!portablePresentationReady()) return false;
+#endif
     RendDX9Base* b = base();
     if (!b->framePresented)
     {

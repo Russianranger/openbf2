@@ -2,6 +2,7 @@ package com.mackillergr.bf2;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Process;
@@ -129,9 +130,11 @@ public final class BF2LogExporter {
                     new OutputStreamWriter(stream, StandardCharsets.UTF_8))) {
                 writer.write("Battlefield 2 Android - diagnostic export\n");
                 writer.write("Timestamp: " + new Date().toString() + "\n");
-                writer.write("Build: " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")\n");
+                writer.write("Android: " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")\n");
                 writer.write("Device: " + Build.MANUFACTURER + " " + Build.MODEL + "\n");
-                writer.write("App: " + activity.getPackageName() + "\n");
+                PackageInfo app = activity.getPackageManager().getPackageInfo(activity.getPackageName(), 0);
+                writer.write("App: " + app.packageName + " " + app.versionName
+                        + " (version code " + app.getLongVersionCode() + ")\n");
                 writer.write("ABI: " + Arrays.toString(Build.SUPPORTED_ABIS) + "\n");
                 File lib = new File(activity.getApplicationInfo().nativeLibraryDir);
                 writer.write("\n===== Native libraries present =====\n");

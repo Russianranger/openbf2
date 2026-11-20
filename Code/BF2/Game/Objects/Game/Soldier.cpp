@@ -334,20 +334,21 @@ anim::IAnimationSystem* animationSystemCreateInstance(void* animationSystemTempl
 }
 
 // Forwards field of view to the renderer-owned geometry.
-// Uses the PE calling convention and slot because the full geometry interface is not declared here.
+// The portable renderer retains the PE slot order, with native arguments. An x86
+// fastcall adapter's unused EDX register is not an argument on ARM64.
 void geometrySlot10(void* geometry, float fov)
 {
-    typedef void(__fastcall* SetFovFn)(void*, void*, float);
+    typedef void(__thiscall* SetFovFn)(void*, float);
     reinterpret_cast<SetFovFn>(
-        (*reinterpret_cast<void***>(geometry))[0x10 / 4])(geometry, 0, fov);
+        (*reinterpret_cast<void***>(geometry))[0x10 / 4])(geometry, fov);
 }
 
 void geometrySlotD8(void* geometry, bool flag)
 {
-    typedef void(__fastcall* Fn)(void*, void*, unsigned int);
+    typedef void(__thiscall* Fn)(void*, unsigned int);
     reinterpret_cast<Fn>(
         (*reinterpret_cast<void***>(geometry))[0xD4 / 4])(
-            geometry, 0, flag ? 1u : 0u);
+            geometry, flag ? 1u : 0u);
 }
 
 // Registers animation templates by name; file loading is deferred to the core event.
@@ -364,17 +365,17 @@ void  animationSystemManagerRelease(void* systemTemplate)
 // Supplies a borrowed bone-transform palette to the kit geometry through its renderer interface.
 void geometrySetBoneTransforms(void* geometry, const Mat4* transforms, int boneCount)  // PE +0x54
 {
-    typedef void(__fastcall* SetBonesFn)(void*, void*, const Mat4*, unsigned int);
+    typedef void(__thiscall* SetBonesFn)(void*, const Mat4*, unsigned int);
     reinterpret_cast<SetBonesFn>(
         (*reinterpret_cast<void***>(geometry))[0x54 / 4])(
-            geometry, 0, transforms, static_cast<unsigned int>(boneCount));
+            geometry, transforms, static_cast<unsigned int>(boneCount));
 }
 
 void geometrySlot7C(void* geometry, int a)                                             // PE +0x78
 {
-    typedef void*(__fastcall* SetLodFn)(void*, void*, int);
+    typedef void*(__thiscall* SetLodFn)(void*, int);
     reinterpret_cast<SetLodFn>(
-        (*reinterpret_cast<void***>(geometry))[0x78 / 4])(geometry, 0, a);
+        (*reinterpret_cast<void***>(geometry))[0x78 / 4])(geometry, a);
 }
 
 // AI events are available only when a published AI instance reports a bots game.

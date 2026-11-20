@@ -3,19 +3,61 @@
 #include "dinput.h"
 #include "wincrypt.h"
 #include <SDL3/SDL.h>
+#if defined(__ANDROID__)
+#include <jni.h>
+#include "AndroidPresentationGate.h"
+#endif
 #include <dlfcn.h>
 #include <unistd.h>
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <string>
+#include <atomic>
 
 static WNDPROC g_wndProc = 0;
 static SDL_Window* g_window = 0;
+#if defined(__ANDROID__)
+static bf2android::PresentationGate g_presentation;
+extern "C" JNIEXPORT void JNICALL
+Java_com_mackillergr_bf2_GameActivity_nativePresentationReady(JNIEnv*, jclass, jboolean ready) {
+    const bool changed = g_presentation.ready() != static_cast<bool>(ready);
+    if (ready) g_presentation.resume();
+    else if (!g_presentation.pause(std::chrono::milliseconds(250)))
+        std::fprintf(stderr, "[surface] Present drain timed out; new presentation remains suspended\n");
+    if (changed) std::fprintf(stderr, "[surface] presentation %s\n", ready ? "resumed" : "suspended");
+}
+extern "C" bool portablePresentationReady() { return g_presentation.ready(); }
+extern "C" bool portableBeginPresent() {
+    if (!g_presentation.begin()) return false;
+    // SDL republishes this property when the replacement Surface is created. Check it on every
+    // entry; an activity resume alone is insufficient to make an Android window usable.
+    if (g_window && SDL_GetPointerProperty(SDL_GetWindowProperties(g_window),
+            SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr)) return true;
+    g_presentation.end();
+    return false;
+}
+extern "C" void portableEndPresent() { g_presentation.end(); }
+#endif
+
 static std::deque<DIDEVICEOBJECTDATA> g_keyEvents, g_mouseEvents;
 static DWORD g_sequence = 0;
 static bool g_keyAcquired = false, g_mouseAcquired = false;
+static std::atomic<bool> g_pointerMode(false);
 static std::deque<MSG> g_messages;
+
+// [CHOSEN, not recovered] Android menus and the spawn/commander HUD consume absolute
+// coordinates. SDL drops absolute motion while relative mode is enabled, even when
+// DirectInput remains acquired. Called only by the engine thread; Java reads the snapshot.
+extern "C" bool portablePointerMode() { return g_pointerMode.load(std::memory_order_acquire); }
+extern "C" void portableSetPointerMode(bool enabled) {
+    if (g_window) {
+        const bool relative = g_mouseAcquired && !enabled;
+        if (SDL_GetWindowRelativeMouseMode(g_window) != relative)
+            SDL_SetWindowRelativeMouseMode(g_window, relative);
+    }
+    g_pointerMode.store(enabled, std::memory_order_release);
+}
 
 // The DIK code of an SDL scancode: DirectInput numbers keys by the PC set-1 scan code.
 static int dikFromScancode(SDL_Scancode s) {
@@ -210,7 +252,7 @@ HRESULT IDirectInput8A::CreateDevice(const GUID& g, IDirectInputDevice8A** out, 
 HRESULT IDirectInput8A::EnumDevices(DWORD, LPDIENUMDEVICESCALLBACKA, LPVOID, DWORD) { return DI_OK; }
 HRESULT IDirectInputDevice8A::Acquire() {
     (kind == 1 ? g_keyAcquired : g_mouseAcquired) = true;
-    if (kind == 2 && g_window) SDL_SetWindowRelativeMouseMode(g_window, true);
+    if (kind == 2 && g_window) SDL_SetWindowRelativeMouseMode(g_window, !portablePointerMode());
     return DI_OK;
 }
 HRESULT IDirectInputDevice8A::Unacquire() {

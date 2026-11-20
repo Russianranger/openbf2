@@ -10,6 +10,7 @@ final class PadState {
 
     private final Output output;
     private final Map<Integer,Integer> held = new HashMap<>();
+    private final HashSet<Integer> blocked = new HashSet<>();
     private int device = -1;
 
     PadState(Output output) { this.output = output; }
@@ -25,6 +26,10 @@ final class PadState {
     boolean isDevice(int id) { return device == id; }
 
     void bind(int control, int action, boolean down) {
+        if (blocked.contains(control)) {
+            if (!down) blocked.remove(control);
+            return;
+        }
         Integer old = held.get(control);
         if (old != null && (!down || old != action)) {
             held.remove(control);
@@ -40,7 +45,25 @@ final class PadState {
     void reset() {
         for (int action : new HashSet<>(held.values())) output.emit(action, false);
         held.clear();
+        blocked.clear();
         device = -1;
+    }
+
+    void changeContext() {
+        blocked.addAll(held.keySet());
+        for (int action : new HashSet<>(held.values())) output.emit(action, false);
+        held.clear();
+    }
+
+    void bindTrigger(int control, int action, float value) {
+        // A little hysteresis prevents a lightly held analog trigger from sending
+        // repeated mouse clicks as its value fluctuates around the press threshold.
+        bind(control, action, value > (held.containsKey(control) || blocked.contains(control) ? .30f : .40f));
+    }
+
+    static float stick(float value, float flat) {
+        if (!Float.isFinite(value) || Math.abs(value) <= flat) return 0f;
+        return Math.max(-1f, Math.min(1f, value));
     }
 
     static float trigger(float value, float minimum, float maximum) {

@@ -3,6 +3,9 @@
 // Script order and event registration are part of the content contract.
 
 #include "GameLogic.h"
+#if defined(__ANDROID__) && !DEDICATED
+#include "../Main/AndroidUiState.h"
+#endif
 #include "../Main/Game.h"        // isDedicated - loadCallback's client/server split
 #include "GameLogicCollision.h"                        // doImpact's exact static forwarding target
 #include "GameLogicExplosion.h"                        // common explosion presentation forwarder
@@ -336,6 +339,10 @@ static void loadCallback()
         percent = 100.0f * loadStat->m_unknown38;
     }
 
+#if defined(__ANDROID__) && !DEDICATED
+    // [CHOSEN, not recovered] The Android view receives the same measured percentage as Flash.
+    androidui::progress(percent);
+#endif
     // BF2.exe 0x4EBF3B gates the whole block on isDedicated(); the ELF does not, because there the
     // test is constant-true. The client prints no "Loaded N%" lines.
     if (isDedicated())
@@ -419,6 +426,15 @@ bool GameLogic::load(const std::string& levelPath)
     ClearDropVehicles();                                   // virtual +0x2D0
     if (m_isLevelLoaded || m_byte1B0)
         return false;
+
+#if defined(__ANDROID__) && !DEDICATED
+    androidui::beginLoading(levelPath);
+    bool androidLoadCompleted = false;
+    struct LoadingOutcome {
+        bool& completed;
+        ~LoadingOutcome() { if (!completed) androidui::publish(androidui::Menu); }
+    } androidOutcome{androidLoadCompleted};
+#endif
 
     // the bare level name: strip the leading "Levels/" (first min(7, len) chars) and the
     //      trailing '/' (0x80CE1C0-0x80CE26A)
@@ -652,6 +668,9 @@ bool GameLogic::load(const std::string& levelPath)
 
     m_isLevelLoaded   = true;                                  // +0x38
     m_isLevelLoadedXP = true;                                  // +0x39
+#if defined(__ANDROID__) && !DEDICATED
+    androidLoadCompleted = true; // The first normal frame, rather than 100%, retires the view.
+#endif
     return true;
 }
 

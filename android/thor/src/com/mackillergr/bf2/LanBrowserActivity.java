@@ -45,7 +45,7 @@ public final class LanBrowserActivity extends Activity {
         found = new LinearLayout(this); found.setOrientation(LinearLayout.VERTICAL); root.addView(found);
         scan.setOnClickListener(v -> runQuery(true));
         query.setOnClickListener(v -> runQuery(false));
-        setContentView(scroll);
+        setContentView(PadMenuFrame.wrap(scroll));
     }
     private TextView text(LinearLayout root, String content) {
         TextView t = new TextView(this); t.setText(content); t.setTextColor(Color.WHITE);

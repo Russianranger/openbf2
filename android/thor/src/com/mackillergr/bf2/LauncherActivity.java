@@ -36,7 +36,7 @@ public final class LauncherActivity extends Activity {
         int pad = Math.round(16 * getResources().getDisplayMetrics().density);
         root.setPadding(pad, pad, pad, pad);
         scroll.addView(root);
-        setContentView(scroll);
+        setContentView(PadMenuFrame.wrap(scroll));
         label("OpenBF2", 26);
         status = label("", 15);
         picker = new GameDirectoryPicker(this, new GameDirectoryPicker.Listener() {
@@ -47,11 +47,25 @@ public final class LauncherActivity extends Activity {
         label("Player name", 16);
         player = field(prefs.getString("player", "Player"));
         label("Offline co-op map", 16);
-        maps = new Spinner(this);
+        maps = new Spinner(this) {
+            @Override public boolean performClick() {
+                if (getAdapter() == null || getCount() == 0) return super.performClick();
+                String[] choices = new String[getCount()];
+                for (int i = 0; i < choices.length; i++) choices[i] = getItemAtPosition(i).toString();
+                PadMenuFrame.show(new AlertDialog.Builder(LauncherActivity.this)
+                        .setTitle("Offline co-op map").setSingleChoiceItems(choices, getSelectedItemPosition(),
+                            (dialog, index) -> { setSelection(index); dialog.dismiss(); }).create());
+                return true;
+            }
+        };
         root.addView(maps);
+        touch = check("Show touch controls", "touch", true);
+        touch.setOnCheckedChangeListener((button, checked) ->
+                prefs.edit().putBoolean("touch", checked).apply());
+        label("Turn off the on-screen buttons for controller play. Touchscreen menu taps still work.", 14);
         button("Play offline with bots", () -> launch(Mode.COOP));
-        button("Offline career", () -> new AlertDialog.Builder(this).setTitle("Offline career")
-            .setMessage(OfflineCareer.summary(this)).setPositiveButton("Close", null).show());
+        button("Offline career", () -> PadMenuFrame.show(new AlertDialog.Builder(this).setTitle("Offline career")
+            .setMessage(OfflineCareer.summary(this)).setPositiveButton("Close", null).create()));
         button("Open Battlefield 2 menu", () -> launch(Mode.MENU));
         label("LAN server address", 16);
         endpoint = field(prefs.getString("endpoint", ""));
@@ -66,7 +80,6 @@ public final class LauncherActivity extends Activity {
         button("Find LAN servers", () -> startActivityForResult(new Intent(this, LanBrowserActivity.class), BROWSE));
         button("Join LAN server", () -> launch(Mode.LAN));
         button("Host LAN Conquest", this::chooseHostMap);
-        touch = check("Show touch controls", "touch", true);
         turnip = check("Use bundled Turnip driver", "turnip", true);
         button("Export game logs", () -> BF2LogExporter.request(this));
         refreshMaps();
@@ -108,8 +121,8 @@ public final class LauncherActivity extends Activity {
         if (choices.isEmpty()) { status.setText("Import a map with a 16-player Conquest layout."); return; }
         Collections.sort(choices, String.CASE_INSENSITIVE_ORDER);
         String[] items = choices.toArray(new String[0]);
-        new AlertDialog.Builder(this).setTitle("Host LAN Conquest").setItems(items,
-                (dialog, i) -> launch(Mode.HOST, items[i])).show();
+        PadMenuFrame.show(new AlertDialog.Builder(this).setTitle("Host LAN Conquest").setItems(items,
+                (dialog, i) -> launch(Mode.HOST, items[i])).create());
     }
     private void launch(Mode mode) { launch(mode, null); }
     private void launch(Mode mode, String hostMap) {
@@ -118,6 +131,7 @@ public final class LauncherActivity extends Activity {
             if (GameSession.isActive(this)) {
                 Intent resume = new Intent(this, GameActivity.class);
                 resume.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                resume.putExtra("touch", touch.isChecked());
                 startActivity(resume);
                 return;
             }

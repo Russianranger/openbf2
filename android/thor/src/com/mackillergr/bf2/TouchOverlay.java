@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
@@ -35,9 +36,34 @@ public class TouchOverlay extends View {
     private float stickX, stickY, knobX, knobY;
     private boolean w, a, s, d;
     private boolean menu;
+    private boolean controlsVisible = true;
+    private boolean inputActive;
+    private int phase = AndroidUiState.STARTING;
+    private HandheldInput controller;
+    private boolean cursorWasVisible;
+    private final Path cursorShape = new Path();
     private int gameWidth = 1280;
     private int gameHeight = 720;
     private float lastTapX = -1, lastTapY = -1;
+    private float menuX, menuY;
+    public void setController(HandheldInput controller) {
+        this.controller = controller;
+        invalidate();
+    }
+    public void setControlsVisible(boolean visible) {
+        if (controlsVisible == visible) return;
+        releaseAll();
+        controlsVisible = visible;
+        lastTapX = lastTapY = -1;
+        invalidate();
+    }
+    public void setInputActive(boolean active) {
+        inputActive = active;
+        removeCallbacks(watch);
+        if (active && isAttachedToWindow()) post(watch);
+        else releaseAll();
+        invalidate();
+    }
     public void setGameResolution(int width, int height) {
         if (width > 0 && height > 0) {
             gameWidth = width;
@@ -46,7 +72,10 @@ public class TouchOverlay extends View {
         invalidate();
     }
     private float[] touchToSdl(float x, float y) {
-        return MenuPointerMapper.map(x, y, getWidth(), getHeight(), gameWidth, gameHeight);
+        float[] p = MenuPointerMapper.map(x, y, getWidth(), getHeight(), gameWidth, gameHeight);
+        if (controller != null && getWidth() > 0 && getHeight() > 0)
+            controller.setPointerFraction(p[0] / getWidth(), p[1] / getHeight());
+        return p;
     }
     private void traceTouch(String phase, float rawX, float rawY, float[] converted) {
         android.util.Log.i("BF2MenuTouch", phase + " raw=(" + rawX + "," + rawY
@@ -54,37 +83,68 @@ public class TouchOverlay extends View {
                 + ") overlay=" + getWidth() + "x" + getHeight()
                 + " game=" + gameWidth + "x" + gameHeight);
     }
-    // The intro movie uses the keyboard's DIK_ESCAPE (1) to advance skippable clips.
-    // Hide this overlay once the native Flash main menu has appeared.
-    private boolean introSkipVisible = true;
+    // Only an active, skippable native intro clip exposes the Escape action.
+    private boolean introSkipVisible;
+    private boolean introSkipHeld;
     private int introSkipPointer = -1;
     private int logPointer = -1;
     private long skipPressedAt = 0L;
+    private final Runnable releaseSkip = () -> {
+        if (introSkipPointer == -1 && introSkipHeld) {
+            introSkipHeld = false;
+            key(KeyEvent.KEYCODE_ESCAPE, false);
+        }
+    };
     static native boolean menuShown();
     private static native void toggleKeyboard();
     private final Runnable watch = new Runnable() {
         @Override public void run() {
-            boolean now = menu;
-            try { now = menuShown(); } catch (UnsatisfiedLinkError notLoaded) { }
-            // menuShown() is true even while intro videos play; never hide Skip Intro here.
-            if (now != menu) { releaseAll(); menu = now; invalidate(); }
-            postDelayed(this, 250);
+            if (!inputActive || !isAttachedToWindow()) return;
+            refreshMode();
+            boolean cursor = controllerCursorVisible();
+            if (cursor || cursorWasVisible) invalidate();
+            cursorWasVisible = cursor;
+            postDelayed(this, cursor ? 16 : 250);
         }
     };
+    private void refreshMode() {
+        boolean now = menu;
+        try { now = menuShown(); } catch (UnsatisfiedLinkError notLoaded) { }
+        int state = AndroidUiState.snapshot();
+        int nextPhase = AndroidUiState.phase(state);
+        boolean skip = AndroidUiState.canSkipIntro(state);
+        if (now != menu || phase != nextPhase || skip != introSkipVisible) {
+            releaseAll();
+            menu = now;
+            phase = nextPhase;
+            introSkipVisible = skip;
+            invalidate();
+        }
+    }
 
     public TouchOverlay(Context context) {
         super(context);
         text.setColor(Color.WHITE); text.setTextAlign(Paint.Align.CENTER); text.setFakeBoldText(true);
-        post(watch);
+    }
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (inputActive) { removeCallbacks(watch); post(watch); }
+    }
+    @Override protected void onDetachedFromWindow() {
+        removeCallbacks(watch);
+        releaseAll();
+        super.onDetachedFromWindow();
     }
     private void releaseAll() {
         for (Button b : buttons) if (b.pointer >= 0) { b.pointer = -1; press(b, false); }
-        if (introSkipPointer != -1) {
-            introSkipPointer = -1;
+        removeCallbacks(releaseSkip);
+        introSkipPointer = -1;
+        if (introSkipHeld) {
+            introSkipHeld = false;
             key(KeyEvent.KEYCODE_ESCAPE, false);
         }
         logPointer = -1;
-        if (menuPressed) SDLActivity.onNativeMouse(0, MOUSE_UP, 0, 0, false);
+        if (menuPressed) SDLActivity.onNativeMouse(0, MOUSE_UP, menuX, menuY, false);
         menuPressed = false;
         menuPointer = -1;
         stickPointer = -1; setMove(0, 0); look.clear();
@@ -99,11 +159,12 @@ public class TouchOverlay extends View {
             int id = e.getPointerId(index);
             if (menuPointer != -1) return;
             float x = e.getX(index), y = e.getY(index);
-            if (Math.hypot(x - keyboardX(), y - keyboardY()) < radius() * 1.1f) {
+            if (controlsVisible && Math.hypot(x - keyboardX(), y - keyboardY()) < radius() * 1.1f) {
                 toggleKeyboard();
                 return;
             }
             float[] p = touchToSdl(x, y);
+            menuX = p[0]; menuY = p[1];
             traceTouch("DOWN", x, y, p);
             menuPointer = id;
             lastTapX = x; lastTapY = y;
@@ -117,6 +178,7 @@ public class TouchOverlay extends View {
             if (idx < 0) return;
             float x = e.getX(idx), y = e.getY(idx);
             float[] p = touchToSdl(x, y);
+            menuX = p[0]; menuY = p[1];
             lastTapX = x; lastTapY = y;
             SDLActivity.onNativeMouse(0, MOUSE_MOVE, p[0], p[1], false);
             invalidate();
@@ -127,6 +189,7 @@ public class TouchOverlay extends View {
             int idx = action == MotionEvent.ACTION_CANCEL ? Math.max(0,e.findPointerIndex(menuPointer)) : index;
             float x = e.getX(idx), y = e.getY(idx);
             float[] p = touchToSdl(x, y);
+            menuX = p[0]; menuY = p[1];
             traceTouch("UP", x, y, p);
             SDLActivity.onNativeMouse(0, MOUSE_MOVE, p[0], p[1], false);
             SDLActivity.onNativeMouse(0, MOUSE_UP, p[0], p[1], false);
@@ -177,8 +240,8 @@ public class TouchOverlay extends View {
         introSkipPointer = -1;
         long elapsed = android.os.SystemClock.uptimeMillis() - skipPressedAt;
         // Keep ESC down across at least a few SDL frames even for very quick taps.
-        postDelayed(() -> { if (introSkipPointer == -1) key(KeyEvent.KEYCODE_ESCAPE, false); },
-                    Math.max(0L, 180L - elapsed));
+        removeCallbacks(releaseSkip);
+        postDelayed(releaseSkip, Math.max(0L, 180L - elapsed));
         invalidate();
     }
     private void exportGameLog() {
@@ -189,17 +252,53 @@ public class TouchOverlay extends View {
     private float stickRadius() { return getHeight() * 0.16f; }
     private float baseX() { return getWidth() * 0.14f; }
     private float baseY() { return getHeight() * 0.72f; }
+    private boolean pointerMode() { return menu || phase == AndroidUiState.MENU; }
+    private boolean logVisible() { return phase == AndroidUiState.MENU || phase == AndroidUiState.INTRO; }
+    private boolean loading() { return phase == AndroidUiState.STARTING || phase == AndroidUiState.LOADING; }
+    private boolean controllerCursorVisible() {
+        return inputActive && !loading() && phase != AndroidUiState.INTRO
+                && controller != null && controller.cursorVisible();
+    }
+    private void drawControllerCursor(Canvas c) {
+        if (!controllerCursorVisible()) return;
+        float x = Math.max(0, Math.min(getWidth() - 1, controller.cursorFractionX() * getWidth()));
+        float y = Math.max(0, Math.min(getHeight() - 1, controller.cursorFractionY() * getHeight()));
+        float size = Math.max(18f, getHeight() * 0.025f);
+        cursorShape.reset();
+        cursorShape.moveTo(x, y);
+        cursorShape.lineTo(x, y + size);
+        cursorShape.lineTo(x + size * 0.28f, y + size * 0.72f);
+        cursorShape.lineTo(x + size * 0.52f, y + size);
+        cursorShape.lineTo(x + size * 0.70f, y + size * 0.90f);
+        cursorShape.lineTo(x + size * 0.47f, y + size * 0.61f);
+        cursorShape.lineTo(x + size * 0.85f, y + size * 0.59f);
+        cursorShape.close();
+        fill.setStyle(Paint.Style.STROKE);
+        fill.setStrokeWidth(Math.max(2f, size * 0.13f));
+        fill.setColor(Color.BLACK);
+        c.drawPath(cursorShape, fill);
+        fill.setStyle(Paint.Style.FILL);
+        fill.setColor(Color.WHITE);
+        c.drawPath(cursorShape, fill);
+    }
 
     @Override protected void onDraw(Canvas c) {
-        if (menu) {
+        drawTouchControls(c);
+        drawControllerCursor(c);
+    }
+    private void drawTouchControls(Canvas c) {
+        if (!controlsVisible || loading()) return;
+        if (phase == AndroidUiState.INTRO) {
+            if (introSkipVisible) drawSkipButton(c);
+            if (logVisible()) drawLogButton(c);
+            return;
+        }
+        if (pointerMode()) {
             fill.setColor(Color.argb(80, 255, 255, 255));
             c.drawCircle(keyboardX(), keyboardY(), radius(), fill);
             text.setTextSize(radius() * 0.42f);
             c.drawText("ABC", keyboardX(), keyboardY() + radius() * 0.15f, text);
-            // Video playback and Flash UI both report menuShown=true in test13.
-            // Floating actions must be drawn in both modes.
-            if (introSkipVisible) drawSkipButton(c);
-            drawLogButton(c);
+            if (logVisible()) drawLogButton(c);
             if (lastTapX >= 0) {
                 fill.setColor(Color.argb(175, 255, 200, 0));
                 c.drawCircle(lastTapX, lastTapY, Math.max(5f, radius()*0.09f), fill);
@@ -217,8 +316,6 @@ public class TouchOverlay extends View {
             c.drawCircle(x, y, radius(), fill);
             c.drawText(b.label, x, y + radius() * 0.15f, text);
         }
-        if (introSkipVisible) drawSkipButton(c);
-        drawLogButton(c);
     }
     private void key(int code, boolean down) {
         if (down) SDLActivity.onNativeKeyDown(code); else SDLActivity.onNativeKeyUp(code);
@@ -275,20 +372,28 @@ public class TouchOverlay extends View {
         }
     }
     @Override public boolean onTouchEvent(MotionEvent e) {
+        if (!inputActive) return true;
+        refreshMode();
         int action = e.getActionMasked(), index = e.getActionIndex();
-        // Intercept floating buttons before the Flash menu mouse forwarding.
-        // Do NOT use menuShown() here as a sign that the intro finished.
+        if (action == MotionEvent.ACTION_CANCEL) { releaseAll(); invalidate(); return true; }
+        if (loading()) return true;
+        if (!controlsVisible) {
+            if (pointerMode() && phase != AndroidUiState.INTRO) menuTouch(e);
+            return true;
+        }
+        // Floating actions are available only in their native phase, never over gameplay.
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             int id = e.getPointerId(index);
             float x = e.getX(index), y = e.getY(index);
             if (introSkipVisible && introSkipPointer == -1 && onSkipButton(x, y)) {
                 introSkipPointer = id;
                 skipPressedAt = android.os.SystemClock.uptimeMillis();
-                key(KeyEvent.KEYCODE_ESCAPE, true);
+                removeCallbacks(releaseSkip);
+                if (!introSkipHeld) { introSkipHeld = true; key(KeyEvent.KEYCODE_ESCAPE, true); }
                 invalidate();
                 return true;
             }
-            if (logPointer == -1 && onLogButton(x, y)) {
+            if (logVisible() && logPointer == -1 && onLogButton(x, y)) {
                 logPointer = id;
                 invalidate();
                 return true;
@@ -305,14 +410,10 @@ public class TouchOverlay extends View {
                 invalidate();
                 return true;
             }
-        } else if (action == MotionEvent.ACTION_CANCEL) {
-            if (introSkipPointer != -1) releaseSkipTouch();
-            logPointer = -1;
-            invalidate();
-            return true;
         }
         if (introSkipPointer != -1 || logPointer != -1) return true;
-        if (menu) { menuTouch(e); return true; }
+        if (phase == AndroidUiState.INTRO) return true;
+        if (pointerMode()) { menuTouch(e); return true; }
         switch (action) {
             case MotionEvent.ACTION_DOWN: case MotionEvent.ACTION_POINTER_DOWN:
                 began(e.getPointerId(index), e.getX(index), e.getY(index)); break;
@@ -321,9 +422,6 @@ public class TouchOverlay extends View {
                 break;
             case MotionEvent.ACTION_UP: case MotionEvent.ACTION_POINTER_UP:
                 ended(e.getPointerId(index)); break;
-            case MotionEvent.ACTION_CANCEL:
-                for (int i = 0; i < e.getPointerCount(); ++i) ended(e.getPointerId(i));
-                break;
             default: break;
         }
         invalidate();

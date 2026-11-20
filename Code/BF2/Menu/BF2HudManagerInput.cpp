@@ -191,7 +191,10 @@ void BF2HudManager::handleGameInput(float /*delta*/, io::GameInput& input)
 #if defined(BF2_PORTABLE_CLIENT)
     float pointerFractionX, pointerFractionY;
     if (portablePointerPosition(&pointerFractionX, &pointerFractionY)) {
-        position[0] = -400.0f + pointerFractionX * 800.0f;
+        // [CHOSEN, not recovered] SDL positions cover the full drawable, including
+        // widescreen HUD space. Special command-wheel bounds still clamp below.
+        const float screenWidth = widescreen::width(ref2System);
+        position[0] = (pointerFractionX - 0.5f) * screenWidth;
         position[1] = -300.0f + pointerFractionY * 600.0f;
     } else
 #endif
