@@ -8,12 +8,25 @@
 namespace dice { namespace hfe { namespace ai {
 
 WeaponInfo::WeaponInfo(IWeapon* weapon)
-    : m_weapon(weapon), m_rearmAmount(0.0f)
+    : m_weapon(weapon), m_rearmAmount(0.0f), m_planReferences(0), m_retired(false), m_managerGone(false)
 {
 }
 
 WeaponInfo::~WeaponInfo()
 {
+}
+
+void WeaponInfo::releasePlanReference()
+{
+    if (--m_planReferences == 0 && m_managerGone)
+        delete this;
+}
+
+void WeaponInfo::releaseManagerOwnership()
+{
+    m_managerGone = true;
+    if (!m_planReferences)
+        delete this;
 }
 
 bool WeaponInfo::update()

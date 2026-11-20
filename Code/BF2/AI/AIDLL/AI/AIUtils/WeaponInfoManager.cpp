@@ -3,6 +3,7 @@
 #include "WeaponInfoManager.h"
 
 #include "checkPointer.h"
+#include "../AIKnowledge/WeaponInfo.h"
 
 namespace dice {
 namespace hfe {
@@ -20,10 +21,13 @@ WeaponInfoManager::WeaponInfoManager()
         m_instance = this;
 }
 
-// Frees the non-owning pool and clears the singleton only when it points to this manager.
-// WeaponInfo objects must be released separately.
+// AI teardown normally destroys bots first; any remaining plan pin owns its retired record.
 WeaponInfoManager::~WeaponInfoManager()
 {
+    m_pool->releaseIf([this](WeaponInfo* info) { retire(info); return true; });
+    collectRetired();
+    for (WeaponInfo* info : m_retired)
+        info->releaseManagerOwnership();
     if (m_pool)
         operator delete(m_pool);
 
@@ -34,7 +38,12 @@ WeaponInfoManager::~WeaponInfoManager()
 // Returns 0 when the pool is full - the one failure this class reports.
 WeaponInfoManager::Handle WeaponInfoManager::registerInformation(WeaponInfo* info)
 {
-    return m_pool->acquire(info);
+    if (!info || info->isRetired())
+        return 0;
+    const Handle handle = m_pool->acquire(info);
+    if (!handle)
+        retire(info);
+    return handle;
 }
 
 // Null for a stale or zero handle; there is no separate validity query.
@@ -47,20 +56,34 @@ WeaponInfo* WeaponInfoManager::getInformation(Handle handle) const
 // in eax rather than one materialised value. See Core/SpHandlePool.h::set.
 void WeaponInfoManager::setInformation(Handle handle, WeaponInfo* info)
 {
-    m_pool->set(handle, info);
+    WeaponInfo* const previous = m_pool->get(handle);
+    if (!previous || !m_pool->trySet(handle, info))
+    {
+        retire(info);
+        return;
+    }
+    if (previous != info)
+        retire(previous);
 }
 
 // Bumps the generation, so every outstanding handle to this slot goes stale.
 // Return type [UNRESOLVED]; `void` for the same reason as setInformation.
 void WeaponInfoManager::freeInformation(Handle handle)
 {
+    WeaponInfo* const info = m_pool->get(handle);
+    if (!info)
+        return;
     m_pool->release(handle);
+    retire(info);
 }
 
 // setInformation again, with a bool. Both ship; see the header.
 bool WeaponInfoManager::changeInformation(Handle handle, WeaponInfo* info)
 {
-    return m_pool->trySet(handle, info);
+    if (!m_pool->get(handle))
+        return false;
+    setInformation(handle, info);
+    return true;
 }
 
 // Both handles validated before either store, so no half-swap is possible.
@@ -69,11 +92,44 @@ bool WeaponInfoManager::swapInformation(Handle a, Handle b)
     return m_pool->swap(a, b);
 }
 
-// Rebuilds the free chain but does not clear values or generations - so every
-// handle issued before the reset stays correctly invalid. See Core/SpHandlePool.h::reset.
+// [CHOSEN, not recovered] Release records before rebuilding the free chain; old handles stay stale.
 bool WeaponInfoManager::reset()
 {
+    m_pool->releaseIf([this](WeaponInfo* info) { retire(info); return true; });
     return m_pool->reset();
+}
+
+// [CHOSEN, not recovered] Adapted from eonflux7/openbf2-eon64 dd8b056c.
+// Invalidate handles immediately, but pin records for plan owners and local tick borrowers.
+int WeaponInfoManager::releaseWeapon(const IWeapon* weapon)
+{
+    return m_pool->releaseIf([this, weapon](WeaponInfo* info) {
+        if (info->getWeapon() != weapon)
+            return false;
+        retire(info);
+        return true;
+    });
+}
+
+void WeaponInfoManager::retire(WeaponInfo* info)
+{
+    if (!info || info->isRetired())
+        return;
+    info->retire();
+    m_retired.push_back(info);
+}
+
+void WeaponInfoManager::collectRetired()
+{
+    std::size_t keep = 0;
+    for (WeaponInfo* info : m_retired)
+    {
+        if (info->planReferences())
+            m_retired[keep++] = info;
+        else
+            delete info;
+    }
+    m_retired.resize(keep);
 }
 
 } // namespace ai

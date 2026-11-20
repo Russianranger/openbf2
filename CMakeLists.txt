@@ -2438,7 +2438,7 @@ if(APPLE)
     bf2_set_platform_compat(bf2_game_frontier_check)
     bf2_set_image(bf2_game_frontier_check 0)
     set_source_files_properties(Code/Tests/game_frontier_x87_narrow.cpp PROPERTIES
-        COMPILE_OPTIONS "-Wno-builtin-macro-redefined;-U__LDBL_MANT_DIG__;-D__LDBL_MANT_DIG__=53")
+        COMPILE_OPTIONS "-Wno-builtin-macro-redefined;-U__LDBL_MANT_DIG__;-D__LDBL_MANT_DIG__=53;-DBF2X87_CLIENT_EXACT_EXTENDED")
     target_link_options(bf2_game_frontier_check PRIVATE "-Wl,-undefined,dynamic_lookup")
     if(BUILD_TESTING)
         add_test(NAME bf2_game_frontier_check COMMAND bf2_game_frontier_check)

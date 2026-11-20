@@ -1,5 +1,7 @@
 
 #include "WeaponObject.h"
+#include <cstdio>
+#include <cstdlib>
 
 #include "BFGame.h"                                          // IAIGame::getIsPrecaching (+0x68)
 #include "BFTimer.h"                                         // IBFTimer::getGameTime
@@ -57,9 +59,23 @@ WeaponObject::WeaponObject(WeaponTemplate* weaponTemplate)
     m_information[2] = kNoInformation;
 }
 
-// the vptr store only - the information handles are not freed.
+// Retail: the vptr store only - the information handles are not freed.
+// [CHOSEN, not recovered] pr/x64-local: tell the AI this weapon is gone, so no WeaponInfo record
+// keeps calling into it (see WeaponInfoManager::releaseWeapon). BF2_AI_WEAPON_TRACE=1 logs it.
 WeaponObject::~WeaponObject()
 {
+    if (IAIInformationCourier* const courier =
+            static_cast<IAIInformationCourier*>(CommonSingletonServer::m_iaiInformationCourier))
+    {
+        const int released = courier->weaponDestroyed(this);
+        static const bool trace = std::getenv("BF2_AI_WEAPON_TRACE") != 0;
+        if (released && trace)
+        {
+            std::fprintf(stderr, "[AI-WEAPON] WeaponObject %p destroyed: released %d AI weapon record(s)\n",
+                         static_cast<void*>(this), released);
+            std::fflush(stderr);
+        }
+    }
 }
 
 // (, a folded twin): one count, destroyed at zero.

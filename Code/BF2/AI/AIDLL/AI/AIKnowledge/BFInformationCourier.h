@@ -17,6 +17,8 @@ namespace dice {
 namespace hfe {
 namespace ai {
 
+class IWeapon;
+
 // Information-courier interface shared by the engine and DLL. Registration guards the
 // roster static, which may stay stale until updateStaticMethods refreshes it.
 class IAIInformationCourier
@@ -37,6 +39,8 @@ public:
     virtual void resetArmament(unsigned int handle) = 0;                        // +0x30
     virtual void saveCurrentPolygon(IAIObject* object) = 0;                     // +0x34
     virtual void updateCurrentPolygon(IAIObject* object) = 0;                   // +0x38
+    // [CHOSEN, not recovered] appended slot: drop every weapon record built on this engine weapon.
+    virtual int  weaponDestroyed(IWeapon* weapon) = 0;                          // +0x3C
 };
 
 // BFInformationCourier - sizeof == 68, from BF2AI::init step 4. ctor / PE
@@ -61,6 +65,7 @@ public:
     virtual void resetArmament(unsigned int handle);
     virtual void saveCurrentPolygon(IAIObject* object);
     virtual void updateCurrentPolygon(IAIObject* object);
+    virtual int  weaponDestroyed(IWeapon* weapon);
 
 private:
     // saveCurrentPolygon and

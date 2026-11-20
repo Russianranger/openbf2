@@ -72,7 +72,7 @@ WeaponInfo* IPIArmament::getLastFiredWeapon()
     const int fire = weapon->getWeaponFire();
     const int activation = weapon->getWeaponActivate();
     const int index = armament->getWeaponIdFromActivationId(activation, fire);
-    return WeaponInfoManager::m_instance->getInformation(m_weapons[index]);
+    return WeaponInfoManager::m_instance->getInformation(getWeapon(index));
 }
 
 int IPIArmament::isAntiAircraft() const
@@ -82,6 +82,8 @@ int IPIArmament::isAntiAircraft() const
 
 void IPIArmament::rearm(WeaponInfo* weapon, float amount, int side)
 {
+    if (!weapon || weapon->isRetired())
+        return;
     weapon->m_rearmAmount += amount;
     if (m_information->getAIObject()->getArmament()->rearm(weapon->m_weapon,
                                                            weapon->m_rearmAmount, side))
@@ -100,6 +102,8 @@ bool IPIArmament::getProjectileSpeed(Vec3& out) const
 
 void IPIArmament::updateWeaponInternal(int index, bool real)
 {
+    if (index < 0 || static_cast<unsigned int>(index) >= m_weapons.size())
+        return;
     const std::vector<IWeapon*>& engineWeapons =
         m_information->getAIObject()->getArmament()->getWeapons();
     if (engineWeapons.size() != m_weapons.size())

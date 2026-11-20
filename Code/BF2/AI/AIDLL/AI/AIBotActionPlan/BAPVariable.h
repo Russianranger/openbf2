@@ -9,6 +9,7 @@
 #define AI_AIDLL_AI_AIBOTACTIONPLAN_BAPVARIABLE_H
 
 #include "../AIPlanInterpreter/BAPContext.h"
+#include "../AIKnowledge/WeaponInfo.h"
 
 namespace dice {
 namespace hfe {
@@ -26,6 +27,29 @@ public:
     /* +0x04 */ void* m_owner;    // [UNRESOLVED] type and name
     /* +0x08 */ T     m_value;    // bool: false, Vec3: (0, 1, 0) at the construction above
     /* after */ int   m_tail;     // = 0; +0x0C for bool, +0x14 for Vec3 [UNRESOLVED] meaning
+};
+
+// [CHOSEN, not recovered] A fire plan can outlive a recycled engine weapon. Its immutable
+// capture pins the record until context clear; isValid prevents dispatch into the dead weapon.
+template <>
+class BAPVariable<WeaponInfo*> : public BotScriptVariable
+{
+public:
+    BAPVariable(void* owner, WeaponInfo* value) : m_owner(owner), m_value(value), m_tail(0)
+    {
+        if (m_value) m_value->retainPlanReference();
+    }
+    virtual ~BAPVariable()
+    {
+        if (m_value) m_value->releasePlanReference();
+    }
+    virtual bool isValid() const { return m_value && !m_value->isRetired(); }
+    void* m_owner;
+    WeaponInfo* const m_value;
+    int m_tail;
+private:
+    BAPVariable(const BAPVariable&) = delete;
+    BAPVariable& operator=(const BAPVariable&) = delete;
 };
 
 } // namespace ai

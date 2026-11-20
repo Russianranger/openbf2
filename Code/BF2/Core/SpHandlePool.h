@@ -100,6 +100,24 @@ public:
         m_freeTail = index;
     }
 
+    // [CHOSEN, not recovered] Releases every live record whose value satisfies pred(value) and
+    // returns how many were released. Used to drop AI weapon records whose engine weapon is gone.
+    template <class Pred>
+    int releaseIf(Pred pred)
+    {
+        int released = 0;
+        for (int i = 0; i < N; ++i)
+        {
+            Record& rec = m_records[i];
+            if (rec.m_value && pred(rec.m_value))
+            {
+                release(static_cast<Handle>(i + 1) | (static_cast<Handle>(rec.m_generation) << 16));
+                ++released;
+            }
+        }
+        return released;
+    }
+
     // Inlined at `WeaponInfoManager::getInformation`, 0x36D370, 44 B. Null for a stale or zero
     // handle; there is no separate validity query.
     T* get(Handle handle) const

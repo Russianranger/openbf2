@@ -49,8 +49,11 @@ bool BAPConOkToThrowGrenade::evaluate(Bot* bot)
 {
     BotMain* main = static_cast<BotMain*>(bot);
     Information* self = bapinline::info(bot->getCurrentEquipment());
-    IPIArmament* armament = self->getArmament();
-    WeaponInfo* weapon = WeaponInfoManager::m_instance->getInformation(armament->getWeapon(armament->getActiveWeapon()));
+    IPIArmament* armament = self ? self->getArmament() : 0;
+    WeaponInfo* weapon = armament ? WeaponInfoManager::m_instance->getInformation(
+        armament->getWeapon(armament->getActiveWeapon())) : 0;
+    if (!weapon)
+        return false;
     Information* target = bapinline::info(m_object);
     if (!target)
         return false;

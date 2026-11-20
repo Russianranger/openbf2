@@ -68,8 +68,15 @@ bool EntryKeyTurretAimAt::execute(BotScript* script, Bot* bot, bool& ok, bool& d
         return true;
     }
     IPIArmament* const armament = info->getArmament();
-    WeaponInfo* const weapon = WeaponInfoManager::m_instance->getInformation(
-        armament->getWeapon(armament->getActiveWeapon()));
+    WeaponInfo* const weapon = armament ? WeaponInfoManager::m_instance->getInformation(
+        armament->getWeapon(armament->getActiveWeapon())) : 0;
+    if (!weapon)
+    {
+        done = true;
+        ok = false;
+        aim->m_lastYawError = 3.141592741f;
+        return true;
+    }
     const Mat4& transformation = weapon->getAbsoluteTransformation();
     IPIMobile* mobile = info->getMobile();
     if (!mobile && !info->isPrimary())

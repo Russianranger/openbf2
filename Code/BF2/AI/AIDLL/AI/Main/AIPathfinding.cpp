@@ -8,6 +8,7 @@
 #include <algorithm>     // std::remove - deleteMap uses the erase-remove idiom
 #include <cmath>       // traceKnown's line length
 #include <cstddef>
+#include <cstdio>      // [AI-NAV] diagnostic
 #include <sstream>
 #include "../../../../Core/Debug.h"
 #include "../../../../IO/File/File.h"
@@ -816,6 +817,22 @@ bool AIPathfinding::MapContainer::isValidPosition(const Vec3& position, Material
 bool AIPathfinding::MapContainer::isValidPosition(const Vec3& position, MaterialManager* materials,
                                                   unsigned int island, bool ignoreMaterial) const
 {
+    // [CHOSEN, not recovered] pr/x64-local: retail indexes the island unchecked. A strategic area
+    // whose order position found no island (PR maps: AIStrategicArea::m_orderPos[map].island ==
+    // 0xFFFFFFFF) read far outside the island vector and crashed. Search every island instead.
+    if (island >= m_quadTreeManager->getNumberOfIslands())
+    {
+        static bool reported = false;
+        if (!reported)
+        {
+            reported = true;
+            std::fprintf(stderr, "[AI-NAV] isValidPosition: island 0x%X out of range (%u islands); "
+                                 "searching all islands (reported once)\n",
+                         island, m_quadTreeManager->getNumberOfIslands());
+            std::fflush(stderr);
+        }
+        return isValidPosition(position, materials, ignoreMaterial);
+    }
     unsigned int polygon;
     const bool found = m_quadTreeManager->getIsland(island)->findPolygon(
         position, polygon, materials, m_properties->m_allowedHeightDiff);

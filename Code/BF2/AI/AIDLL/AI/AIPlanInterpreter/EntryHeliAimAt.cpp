@@ -55,8 +55,15 @@ bool EntryHeliAimAt::execute(BotScript* script, Bot* bot, bool& ok, bool& done)
         return true;
     }
     IPIArmament* const armament = info->getArmament();
-    WeaponInfo* const weapon = WeaponInfoManager::m_instance->getInformation(
-        armament->getWeapon(armament->getActiveWeapon()));
+    WeaponInfo* const weapon = armament ? WeaponInfoManager::m_instance->getInformation(
+        armament->getWeapon(armament->getActiveWeapon())) : 0;
+    if (!weapon)
+    {
+        done = true;
+        ok = false;
+        aim->m_floats1AC[0] = 3.1415927f;
+        return true;
+    }
     IPIMobile* const mobile = info->getMobile();
     Information* target = 0;
     if (aim->getAimAtType() == 1)

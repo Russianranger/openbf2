@@ -2,6 +2,7 @@
 MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
 COMPONENT_DIR := $(dir $(MAKEFILE_PATH))
 SOURCE_ROOT ?= $(abspath $(COMPONENT_DIR)/../..)
+TEST_ROOT ?= $(SOURCE_ROOT)
 OUT ?= $(CURDIR)/build/android-aidll
 ANDROID_API ?= 28
 HOST_TAG ?= linux-x86_64
@@ -14,7 +15,7 @@ OBJECTS := $(SOURCES:%.cpp=$(OUT)/%.o)
 EXPORTS := $(SOURCE_ROOT)/Code/AidllAbi/aidll-posix.map
 COMMON_FLAGS := -std=gnu++14 -O1 -DNDEBUG -fPIC -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks -ffp-contract=off -fno-omit-frame-pointer -fms-extensions -Wno-narrowing -Wno-unknown-pragmas -Wno-multichar -Wno-deprecated-declarations -Wno-writable-strings
 COMMON_FLAGS += -DBF2_PLATFORM_POSIX -include$(BF2)/Core/BuildConfig.h -include$(BF2)/Core/PlatformCompat.h
-COMMON_FLAGS += -I$(BF2)/External/python-embedded/linux -I$(BF2)/External/python-embedded/py-src-2.3.4/Include
+COMMON_FLAGS += -I$(BF2) -I$(BF2)/External/python-embedded/linux -I$(BF2)/External/python-embedded/py-src-2.3.4/Include
 
 FLAGS := $(COMMON_FLAGS) -DDEDICATED=1 -DBF2_IMAGE_AIDLL=1
 
@@ -32,6 +33,14 @@ $(OUT)/%.o: $(BF2)/%.cpp $(MAKEFILE_PATH)
 
 .PHONY: loader-check
 loader-check: $(OUT)/aidll-loader $(OUT)/libaidll.so
+
+# Runs actual navigation code against a small synthetic mesh. Execute with an ARM64
+# Android runtime; this target is not a host simulation or a gameplay acceptance test.
+.PHONY: nav-recycling-check
+nav-recycling-check: $(OUT)/nav-recycling-check
+
+$(OUT)/nav-recycling-check: $(TEST_ROOT)/Code/Tests/aidll/nav_recycling_runtime.cpp $(OBJECTS)
+	$(CXX) $(FLAGS) -UNDEBUG -I$(BF2) $< $(OBJECTS) -Wl,-z,max-page-size=16384 -o $@
 
 $(OUT)/aidll-loader: $(SOURCE_ROOT)/Code/Tests/aidll/posix_loader.cpp $(BF2)/Core/PluginDll.cpp
 	@mkdir -p $(@D)

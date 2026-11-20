@@ -49,8 +49,11 @@ BAPConSplashDamage::~BAPConSplashDamage()
 bool BAPConSplashDamage::evaluate(Bot* bot)
 {
     Information* self = bapinline::info(bot->getCurrentEquipment());
-    IPIArmament* armament = self->getArmament();
-    WeaponInfo* weapon = WeaponInfoManager::m_instance->getInformation(armament->getWeapon(armament->getActiveWeapon()));
+    IPIArmament* armament = self ? self->getArmament() : 0;
+    WeaponInfo* weapon = armament ? WeaponInfoManager::m_instance->getInformation(
+        armament->getWeapon(armament->getActiveWeapon())) : 0;
+    if (!weapon)
+        return false;
     if (!bapinline::info(m_object))
         return false;
     SensedObject* sensed = bot->getSensedObjectFromHandle(m_object);

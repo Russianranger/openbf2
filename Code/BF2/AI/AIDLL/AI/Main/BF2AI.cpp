@@ -412,7 +412,11 @@ bool BF2AI::shutdown()
 // ELF 0x3EE290
 int BF2AI::update(double /*dt*/)
 {
-    return IAIMain::m_instance->action();       // IAIMain vtable +0x34
+    const int result = IAIMain::m_instance->action(); // IAIMain vtable +0x34
+    // [CHOSEN, not recovered] No local AI borrowers survive this update boundary.
+    if (WeaponInfoManager::m_instance)
+        WeaponInfoManager::m_instance->collectRetired();
+    return result;
 }
 
 // Copies game settings into the AI configuration and initializes the runtime as needed.
