@@ -4,16 +4,17 @@ The ARM64 test application combines the Android SDL/Vulkan client from mackiller
 
 ## Update an existing installation
 
-Install 0.1.4 (version code 5) over 0.1.3 or an earlier signed Thor build. Android checks the original signing identity before installing the update. An in-place update preserves imported game files and the private Offline career database.
+Install 0.1.5 (version code 6) over 0.1.4 or an earlier signed Thor build. Android checks the original signing identity before installing the update. An in-place update preserves imported game files and the private Offline career database.
 
 ## Play an offline round
 
 1. Open **Setup** to choose your player name. On a first installation, choose **Import Battlefield 2 installation** and select the folder containing `mods/bf2`, `python` and `pylib-2.3.4.zip`. Existing imports appear automatically.
 2. In **Deployment**, choose **Select map**, then **Map size**. Each entry identifies the installed layout and whether it supports bots. Choose the two faction counts independently on a bot-supported layout. The default is eight per side, in addition to your soldier. **Solo exploration** opens an installed Conquest layout with zero bots. Your selected roster returns when you switch back to a bot-supported layout.
-3. Choose **Deploy**. At the team, kit and spawn screens, move the right stick and click with RT. The local server uses 50% bot difficulty. The game reads the music named in the map descriptor and fades it as gameplay starts.
-4. Under **Controls → Controller bindings**, assign a Battlefield action to a button or key. You can also assign an action to a hold. With the default Xbox layout, tap B to crouch, hold B for prone, then tap B to stand. Crouch also toggles on the touchscreen. The launcher remembers your **Show touch controls** setting.
-5. Tap the gear or hold Start to open the game options. **Return to game** closes the panel, **Export logs** opens the Android save dialog, and **Return to launcher** leaves the current match available. Use **Resume match** to return with updated controls. To switch maps, use **End current match**, confirm, then deploy again.
-6. Finish a round and check **Career** for completed rounds, score, kills, deaths and rank. LAN sessions and unfinished rounds do not earn offline career credit.
+3. Under **Starting tickets**, set either faction to 1–9,999 or leave its field blank to use the map default. **Set both from team 1** copies the first value to both factions. **Map defaults** clears both values for this map. The launcher remembers each map separately across its sizes, including imported layouts. Changes apply to the next offline deployment.
+4. Choose **Deploy**. At the team, kit and spawn screens, move the right stick and click with RT. The local server uses 50% bot difficulty. The game reads the music named in the map descriptor and fades it as gameplay starts.
+5. Under **Controls → Controller bindings**, assign a Battlefield action to a button or key. You can also assign an action to a hold. With the default Xbox layout, tap B to crouch, hold B for prone, then tap B to stand. Crouch also toggles on the touchscreen. The launcher remembers your **Show touch controls** setting.
+6. Tap the gear or hold Start to open the game options. **Return to game** closes the panel, **Export logs** opens the Android save dialog, and **Return to launcher** leaves the current match available. Use **Resume match** to return with updated controls. To switch maps, use **End current match**, confirm, then deploy again.
+7. Finish a round and check **Career** for completed rounds, score, kills, deaths and rank. LAN sessions and unfinished rounds do not earn offline career credit.
 
 The [controller guide](https://github.com/Russianranger/openbf2/blob/android-engine/docs/android-thor/CONTROLS.md) uses the logical button names from the Thor's Xbox mode. **LAN** hosts Conquest at the chosen map size or joins a compatible server. Joining may require a product key from your own installation.
 
@@ -24,7 +25,7 @@ Use a Linux x86-64 host, Git, Python 3, Make, CMake, Ninja, JDK 17 or 21, Androi
 ```sh
 android/build_thor.sh \
   --keystore /private/keys/openbf2.p12 --alias openbf2-thor \
-  --storepass /private/keys/store.pass --previous-apk /private/releases/OpenBF2-Thor-0.1.3-arm64.apk \
+  --storepass /private/keys/store.pass --previous-apk /private/releases/OpenBF2-Thor-0.1.4-arm64.apk \
   --output out/OpenBF2-Thor-arm64.apk
 ```
 
@@ -37,6 +38,18 @@ The build checks out the pinned Android engine under `ports/android-engine`. It 
 | Russianranger Thor design baseline | `4af39ef4157bc1566a32bbb4021ad2f2c3c8a239` |
 | kr4uzi gameplay and bot engine | `02cc5ac818582689efe3452755f40e5f55edc2c7` |
 | mackillerGR Stage 3.7 Android branch | `aefe0f802d9969fa03c0ebad9c9af742dc6231fd` |
+
+## 0.1.5 offline starting tickets and launcher icon
+
+The signed ARM64 update is 50,255,762 bytes with SHA-256 `4a85020ad21c473eb0cb7392d737a2f210cb1e083497dc3b3bbeb9941c1379d4`. The package and signing certificate match 0.1.4. All 16 packaged libraries passed payload and alignment checks. The APK’s own engine passed 40 starting-ticket and reset checks. The Android 13 launcher passed 12 deployment and ticket tests. [Engine revision](https://github.com/Russianranger/openbf2/commit/23432b974c345c902edfa260a0e70efe4d3f9cd4)
+
+**Deployment → Starting tickets** uses each team’s selected count when a fresh offline round starts. This applies to bot matches and solo exploration. The existing game rules still handle flag bleed, deaths and end-of-round scoring. In the original co-op script, both teams’ 20% warning thresholds use the first team’s starting value, which can affect warning timing when the starting ticket counts differ. The launcher records the requested counts in the exported game log. The app icon now uses a red BF2 mark with a transparent background.
+
+Headless Karkand tests used the original Battlefield 2 round scripts. On the imported 64-player co-op layout, Team 1 used its 100-ticket default and Team 2 started with the selected 234. A player death reduced Team 2 to 233. Timed bleed reduced Team 1 to 96. The next round and an explicit map restart both restored 100/234. Stock 16-player co-op also started and restarted at 456/789, at its original 100/110 defaults, and at the 1/9,999 limits.
+
+The 0.1.4 Karkand test on the Thor loaded the imported co-op 64 layout with 32 and 31 bots configured. Its last sampled frame was 33,900. A native segmentation fault followed the presentation-suspended message. The original trace showed the crash reporter and signal trampoline. This update records the interrupted ARM64 instruction and return addresses before unwinding, so a future export can identify where the fault occurred.
+
+That export also recorded 20 unsuccessful weapon and equipment texture lookups, shader compiler errors and three failed allocations for a debug graph vertex buffer. All 20 named textures have matching DDS files in the Battlefield 2 1.50 patch’s `mods/bf2/Objects_client.zip`. The export leaves open whether the Thor import contained these files and how the engine resolved their paths.
 
 ## 0.1.4 map sizes, vehicles and Singleplayer
 
