@@ -4,6 +4,7 @@
 
 #include "../../Sound/BfSound.h"
 #include "GameServer.h"
+#include "OfflineCoopBots.h"
 #include "VoipServerConnection.h"
 #include "ClientInfo.h"                    // handleDataBlock parses a block-id-1 payload into one
 #include "../Persistence/AntiHacks.h"      // handleClientInfo's ranked name-hash record
@@ -734,6 +735,14 @@ void GameServer::limitCoopPlayers()
         return;
     if (compareIgnoreCase(entry->gameMode, "gpm_coop") != 0)
         return;
+
+    offline_coop::BotCounts offline;
+    if (offline_coop::readBotCounts(offline))
+    {
+        serverSettings->setMaxPlayers(1);
+        serverSettings->setCoopBotCount(offline.total());
+        return;
+    }
 
     if (serverSettings->getMaxPlayers() > 32)
         serverSettings->setMaxPlayers(32);                  // the status-string return, discarded

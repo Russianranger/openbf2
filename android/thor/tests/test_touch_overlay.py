@@ -79,9 +79,10 @@ public class GameActivity extends android.content.Context { public int exports; 
 """,
     "com/mackillergr/bf2/HandheldInput.java": """package com.mackillergr.bf2;
 // Controller/JNI fixture: draw/input coordination is exercised in the actual TouchOverlay.
-public class HandheldInput { public boolean visible; public float x=.5f,y=.5f;
+public class HandheldInput { public boolean visible; public float x=.5f,y=.5f; public int crouchDown,crouchUp,crouchCancel;
 public boolean cursorVisible(){return visible;} public float cursorFractionX(){return x;}
-public float cursorFractionY(){return y;} public void setPointerFraction(float x,float y){this.x=x;this.y=y;} }
+public float cursorFractionY(){return y;} public void setPointerFraction(float x,float y){this.x=x;this.y=y;}
+public void touchCrouch(boolean down){if(down)crouchDown++;else crouchUp++;} public void cancelTouchCrouch(){crouchCancel++;} }
 """,
 }
 
@@ -155,9 +156,15 @@ public final class TouchOverlayTest {
         int count=SDLActivity.events.size();o.runNext();o.runNext();
         check(SDLActivity.events.size()==count,"cancelled delayed skip release cannot leak into controller input");
         o.setControlsVisible(true);phase(o,AndroidUiState.INTRO);
-        check(!o.draw().labels.contains("SKIP INTRO")&&o.draw().labels.contains("LOG"),"unskippable clip hides skip");
+        check(!o.draw().labels.contains("SKIP INTRO")&&!o.draw().labels.contains("LOG"),"unskippable clip hides skip and logs are only in gear menu");
         phase(o,AndroidUiState.GAME);
         check(!o.draw().labels.contains("SKIP INTRO")&&!o.draw().labels.contains("LOG"),"gameplay has no stale diagnostic or intro actions");
+        touch(o,0,1728,928.8f);touch(o,1,1728,928.8f);
+        check(controller.crouchDown==1&&controller.crouchUp==1,"touch crouch uses the shared tap/hold action");
+        touch(o,0,1728,928.8f);o.setInputActive(false);
+        check(controller.crouchCancel==1&&controller.crouchUp==1,"menu/focus cancellation never toggles crouch");
+        check(o.draw().shapes==0,"inactive overlay does not draw controls behind gear menu");
+        o.setInputActive(true);
         touch(o,0,1728,670);o.detach();
         check(last().action==1&&o.pending()==0,"detaching releases input and removes callbacks");
         System.out.println("Touch overlay: "+checks+" checks passed");

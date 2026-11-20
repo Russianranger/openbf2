@@ -1,7 +1,9 @@
 // [TEMP] [CHOSEN, not recovered] [RETIRE-WHEN: music-player-runtime]
 // Exercise the actual MusicPlayer and real event/registry/null-sound/Debug bodies.
 // Typed observers cover only MusicPlayer's collaborators; unobserved host/mod slots abort.
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -35,17 +37,17 @@ static unsigned checks, failures;
 static MusicPlayer* observedPlayer;
 static std::vector<std::string> calls;
 static std::vector<int> callbackStates;
-// [TEMP] Inspect the attested sole data word (+4) without adding a production friend/accessor.
+// [TEMP] Inspect the sole data word after the native vptr without a production friend/accessor.
 // The private-state corruption below is used only for adversarial diagnostic cases.
 static int state(const MusicPlayer& player)
 {
-    static_assert(sizeof(MusicPlayer) == 8, "MusicPlayer is the x86 vptr plus one state word");
+    static_assert(sizeof(void*) != 4 || sizeof(MusicPlayer) == 8, "MusicPlayer is the x86 vptr plus one state word");
     int value;
-    std::memcpy(&value, reinterpret_cast<const unsigned char*>(&player) + 4, sizeof(value));
+    std::memcpy(&value, reinterpret_cast<const unsigned char*>(&player) + sizeof(void*), sizeof(value));
     return value;
 }
 static void corruptState(MusicPlayer& player, int value)
-{ std::memcpy(reinterpret_cast<unsigned char*>(&player) + 4, &value, sizeof(value)); }
+{ std::memcpy(reinterpret_cast<unsigned char*>(&player) + sizeof(void*), &value, sizeof(value)); }
 static void record(const std::string& call)
 { calls.push_back(call); callbackStates.push_back(observedPlayer ? state(*observedPlayer) : -1); }
 static void check(bool passed, const char* label)
@@ -350,6 +352,29 @@ static void recoveredNullSound()
     g_bfSound = &f.sound;
 }
 
+#if defined(__ANDROID__)
+static void directLoading()
+{
+    for (int initial : {0, 1, 2}) {
+        Fixture f; f.seed(initial);
+        f.player->finishDirectLoading();
+        if (initial) expect({"lookup:SwiffHost", "engine", "stop:5"}, "direct gameplay fades only the active music stream");
+        else expect({}, "idle direct gameplay performs no sound or registry calls");
+        check(state(*f.player) == 0, "direct completion returns player to idle");
+        f.clear();
+        for (int frame=0; frame<120; ++frame) f.player->finishDirectLoading();
+        expect({}, "subsequent gameplay frames do not restart or re-request the fade");
+        for (const char* name : {"levels/oman/", "levels/karkand/"}) {
+            std::string path(name); f.event(3, &path);
+            check(state(*f.player) == 2, "subsequent round starts its own loading track");
+            f.clear(); f.player->finishDirectLoading();
+            expect({"lookup:SwiffHost", "engine", "stop:5"}, "each later round fades once");
+            f.clear();
+        }
+    }
+}
+#endif
+
 static int expectedErrorMode, expectedErrorState;
 static void diagnosticObserver(DebugType type, const std::string&, const std::string&, int line,
     const std::string& function, const std::string& message, const std::string& file, void*)
@@ -376,10 +401,15 @@ static int fatalCase(const char* name)
 }
 int main(int argc, char** argv)
 {
+#if defined(_WIN32)
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
     if (argc == 2) return fatalCase(argv[1]);
     gates(); menuBranches(); mapBranches(); recoveredNullSound();
+#if defined(__ANDROID__)
+    directLoading();
+#endif
     std::printf("MusicPlayer runtime: %u/%u passed\n", checks - failures, checks);
     return failures ? 1 : 0;
 }

@@ -38,6 +38,8 @@ public class SurfaceLifecycleRuntimeTest {
     }
     @Implements(value=SDLActivity.class, isInAndroidSdk=false)
     public static class SdlActivity extends org.robolectric.shadows.ShadowActivity {
+        @Implementation protected void onCreate(android.os.Bundle state) { calls.add("sdl:create-activity"); }
+        @Implementation protected void onDestroy() { calls.add("sdl:destroy-activity"); }
         @Implementation protected void onResume() { calls.add("sdl:resume"); }
         @Implementation protected void onPause() { calls.add("sdl:pause"); }
         @Implementation protected void onWindowFocusChanged(boolean focused) { calls.add("sdl:focus:"+focused); }
@@ -101,5 +103,53 @@ public class SurfaceLifecycleRuntimeTest {
         activity.onResume(); view.surfaceChanged(holder,0,1920,1080); activity.onWindowFocusChanged(true);
         calls.clear(); activity.onWindowFocusChanged(false);
         assertEquals(Arrays.asList("gate:false","sdl:focus:false"),calls);
+    }
+    @Test public void optionsMenuSuspendsPresentationAndResumeKeepsOriginalArgs() {
+        android.content.Intent original = new android.content.Intent();
+        original.putExtra("args", new String[]{"--coop","--level","strike_at_karkand"});
+        activity.setIntent(original);
+        GameOptionsView menu = new GameOptionsView(activity, new GameOptionsView.Actions() {
+            public void opened(boolean open) {
+                ReflectionHelpers.callInstanceMethod(activity,"optionsChanged",
+                        ReflectionHelpers.ClassParameter.from(boolean.class,open));
+            }
+            public void exportLogs() {}
+            public void launcher() {}
+        });
+        ReflectionHelpers.setField(activity,"optionsMenu",menu);
+        activity.onResume(); view.surfaceChanged(holder,0,1920,1080); activity.onWindowFocusChanged(true);
+        calls.clear(); menu.setOpen(true);
+        assertEquals("gate:false",calls.get(calls.size()-1));
+        activity.onNewIntent(new android.content.Intent().putExtra("touch",false));
+        assertFalse(menu.isOpen());assertFalse(activity.isFinishing());
+        assertArrayEquals(original.getStringArrayExtra("args"),activity.getIntent().getStringArrayExtra("args"));
+    }
+    @Test public void launcherReturnPreservesSessionButExplicitEndClosesAndTerminatesGameProcess() throws Exception {
+        org.robolectric.shadows.ShadowProcess.setPid(4242);
+        org.robolectric.shadows.ShadowProcess.clearKilledProcesses();
+        GameSession.hold(activity);
+        ReflectionHelpers.callInstanceMethod(activity,"returnToLauncher");
+        android.content.Intent first = org.robolectric.Shadows.shadowOf(activity).getNextStartedActivity();
+        assertEquals(LauncherActivity.class.getName(),first.getComponent().getClassName());
+        assertTrue((first.getFlags() & android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)!=0);
+        assertFalse(activity.isFinishing());assertFalse(org.robolectric.shadows.ShadowProcess.wasKilled(4242));
+        assertNotNull(ReflectionHelpers.getStaticField(GameSession.class,"owner"));
+        activity.onNewIntent(new android.content.Intent().putExtra("endSession",true));
+        assertTrue(activity.isFinishing());
+        assertEquals(LauncherActivity.class.getName(),org.robolectric.Shadows.shadowOf(activity).getNextStartedActivity().getComponent().getClassName());
+        calls.clear();activity.onDestroy();
+        assertTrue(calls.contains("sdl:destroy-activity"));
+        assertFalse(GameSession.isActive(activity));
+        assertTrue(org.robolectric.shadows.ShadowProcess.wasKilled(4242));
+    }
+    @Test public void staleArgumentlessResumeLeavesFreshProcessForNextDeployment() {
+        org.robolectric.shadows.ShadowProcess.setPid(4243);
+        org.robolectric.shadows.ShadowProcess.clearKilledProcesses();
+        activity.setIntent(new android.content.Intent());
+        activity.onCreate(null);
+        assertTrue(activity.isFinishing());
+        assertEquals(LauncherActivity.class.getName(),org.robolectric.Shadows.shadowOf(activity).getNextStartedActivity().getComponent().getClassName());
+        activity.onDestroy();
+        assertTrue(org.robolectric.shadows.ShadowProcess.wasKilled(4243));
     }
 }

@@ -8,7 +8,9 @@
 #include "../../../Core/Ids.h"                          // IID_IGameServer
 #include "../../../Game/IGame.h"                        // the `game` global
 #include "../../../Game/IGameServer.h"                  // createPlayer, slot +0x20
+#include "../../../Game/GameServer/OfflineCoopBots.h"
 #include "../../../Scene/Object/PlayerManager.h"        // the `playerManager` global
+#include "../../../Game/Objects/IPlayer.h"
 #include "../../../Game/IGameLogic.h"                   // the `gameLogic` global
 #include "../../../Game/GameLogic/ServerGameLogic.h"    // forceSpawnBot
 #include "../../../Core/SettingsRepostitory.h"          // the `settings` global
@@ -103,6 +105,21 @@ int BFGameEffector::addBot(int& a, int& b, std::string& name)
 
     // equal weights - the engine balances, not the AI.
     b = world::playerManager->getTeamToAddPlayer(1.0f, 1.0f);
+    offline_coop::BotCounts offline;
+    if (game && game->getCurrentMapGameMode() == "gpm_coop" &&
+        offline_coop::readBotCounts(offline))
+    {
+        int team1 = 0, team2 = 0;
+        const std::list<world::IPlayer*>& players = world::playerManager->getPlayers();
+        for (std::list<world::IPlayer*>::const_iterator it = players.begin(); it != players.end(); ++it)
+        {
+            if (!(*it)->getIsAIPlayer()) continue;
+            if ((*it)->getTeam() == 1) ++team1;
+            if ((*it)->getTeam() == 2) ++team2;
+        }
+        b = offline_coop::nextBotTeam(offline, team1, team2);
+        if (!b) { a = -1; return 0; }
+    }
 
     IGameServer* const server =
         game ? static_cast<IGameServer*>(game->queryInterface(IID_IGameServer)) : 0;

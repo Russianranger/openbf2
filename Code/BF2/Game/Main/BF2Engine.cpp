@@ -3,6 +3,7 @@
 // Coordinates startup, the frame loop and shutdown. Preserve the explicit retail Debug line numbers.
 
 #include "BF2Engine.h"
+#include "../../PortShim/AndroidGameplayInput.h"
 #if defined(__ANDROID__) && !DEDICATED
 #include "AndroidUiState.h"
 #include "../../PortShim/AndroidPresentationGate.h"
@@ -1635,8 +1636,14 @@ bool BF2Engine::mainLoop()
         return true;
     }
     portableSetPointerMode(menuLogic || (hudManager && hudManager->isPointerEnabled()));
+    androidcontrols::updateContext();
     androidui::frame(moviePlayer != nullptr, moviePlayer && movieFlag != 1, menuLogic != nullptr,
                      gameLogic && gameLogic->isLevelLoaded(), game != nullptr);
+    // [CHOSEN, not recovered] Direct loading bypasses the Flash remove-loading command.
+    // Fade only after a normal game frame is ready; progress reaching 100 is not sufficient.
+    if (getenv("BF2_PORT_DIRECT_START") && musicPlayer &&
+        (androidui::snapshot() & 255) == androidui::Game)
+        musicPlayer->finishDirectLoading();
 #endif
 
     // : the idle throttle. The binary does `if (!byte52) usleep(100000);` - a flat 100 ms

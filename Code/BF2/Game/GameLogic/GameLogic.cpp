@@ -36,6 +36,9 @@
 #include "../Objects/Game/DropVehicle.h"         // ECGameLogic/22 controller attachment
 #include "../Common/ClientVoteManager.h"   // ~GameLogic's getInstance / release
 #include "../../AI/AIInterface/AIInstance.h"   // cross-port IAI vtable view
+#include "../../AI/AIDLL/AI/Main/CommonSingletonServer.h"
+#include "../../AI/AIDLL/AI/Main/AISettingsInterfaces.h"
+#include "../GameServer/OfflineCoopBots.h"
 #include "../../IO/Input/PlayerInput.h"   // getIsSprintRequested takes one BY value
 #include "../../Scene/Object/ObjectTypes/Game/IPlayerControlObject.h"   // the weapon slots
 #include "../Objects/IObject.h"                       // handleMessage / getTemplate / getParent
@@ -563,7 +566,27 @@ bool GameLogic::load(const std::string& levelPath)
     if (ai::g_aiInstance && ai::aiInstance()->isBotsGame())
     {
         runScript(std::string("AI/AIDefault.ai"));
+        // [CHOSEN, not recovered] Explicit launcher rosters take precedence even
+        // when imported AIDefault.ai overrides the retail menu's population.
+        offline_coop::BotCounts offline;
+        const bool exactOfflineBots = isServer() && game->getCurrentMapGameMode() == "gpm_coop" &&
+            offline_coop::readBotCounts(offline);
+        ai::IAISettingsModifier* modifier = static_cast<ai::IAISettingsModifier*>(
+            ai::CommonSingletonServer::m_iaiSettingsModifier);
+        if (exactOfflineBots && !modifier)
+        {
+            std::fprintf(stderr, "[offline-coop] AI settings unavailable; cannot apply requested bot roster\n");
+            return false;
+        }
         ai::aiInstance()->setFlag14(true);                     // settings-from-menu, literal true
+        if (exactOfflineBots)
+        {
+            modifier->setMaxNBots(offline.total());
+            modifier->maxBotsIncludeHumans(false);
+            modifier->setAutoSpawnBots(true);
+            std::fprintf(stderr, "[offline-coop] exact bot roster team1=%d team2=%d humanSlots=1\n",
+                         offline.team1, offline.team2);
+        }
         runScript(std::string("AI/AIBehaviours.ai"));
     }
 

@@ -2,7 +2,6 @@ package com.mackillergr.bf2;
 
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -11,7 +10,6 @@ import android.view.MotionEvent;
 import android.view.View;
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 
 /** Android loading presentation for the direct-start path that bypasses the Flash frontend. */
 public final class GameLoadingView extends View {
@@ -76,25 +74,7 @@ public final class GameLoadingView extends View {
         new Thread(() -> {
             Bitmap decoded = null;
             try {
-                File image = LoadingArt.find(folder, level);
-                if (image != null && image.length() <= 16 * 1024 * 1024) {
-                    byte[] bytes = Files.readAllBytes(image.toPath());
-                    if (DdsImage.matches(bytes)) {
-                        DdsImage dds = DdsImage.decode(bytes);
-                        decoded = Bitmap.createBitmap(dds.pixels, dds.width, dds.height, Bitmap.Config.ARGB_8888);
-                    } else {
-                        BitmapFactory.Options options = new BitmapFactory.Options();
-                        options.inJustDecodeBounds = true;
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
-                        if (options.outWidth > 0 && options.outHeight > 0) {
-                            options.inSampleSize = 1;
-                            while (options.outWidth / options.inSampleSize > 2048 || options.outHeight / options.inSampleSize > 2048)
-                                options.inSampleSize *= 2;
-                            options.inJustDecodeBounds = false;
-                            decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
-                        }
-                    }
-                }
+                decoded = LoadingBitmap.read(LoadingArt.find(folder, level));
             } catch (IOException | RuntimeException failure) {
                 android.util.Log.w("BF2Loading", "Loading artwork unavailable: " + failure.getMessage());
             }

@@ -35,6 +35,21 @@ The transparent view does not redraw during gameplay. Direct launches poll state
 250 ms outside loading to detect the next round, and every 100 ms while loading; only
 visibility, percentage, map, or artwork changes invalidate it. Flash launches do not poll.
 
+Direct loading also needs to finish its music lifecycle. The map's `.desc` selects the
+loading track (the stock Karkand descriptor names `common/sound/menu/music/load_MEC_music.ogg`).
+`MusicPlayer` starts it on `ECMenu` event 3. The usual event 5 comes from the Flash
+remove-loading command, which the direct launch does not execute. At the first normal
+frame whose published phase is gameplay, Android now calls `MusicPlayer::finishDirectLoading`.
+It uses the existing five-second `stopMusic` fade and returns the player to idle. Idle
+frames do nothing; the next map event can start and fade its own track. The hook does not
+change master, effects, voice, or stored music volume, and Flash launches retain their flow.
+
+The changed lifecycle lives in `BF2Engine.cpp` and `Sound/BfSound/MusicPlayer.cpp`, both
+members of `bf2_client_objects` linked into the rebuilt APK's `libmain.so`. The existing
+`libBF2Audio.so` owns the Ogg worker and source-specific fade; it is intentionally unchanged.
+`Sound/SoundEngine/Music.cpp` is guarded by `BF2_IMAGE_BF2AUDIO`, so changing that file in
+the host-only build would not change the packaged audio plugin.
+
 This is an intentional Android presentation change requested for the direct offline
 workflow, not a reconstruction of the retail loading movie or a claim that the Flash
 direct-start lifecycle has been validated.
@@ -54,6 +69,17 @@ direct-start lifecycle has been validated.
   all 1,048,576 RGBA bytes matched. Its artwork is not part of the regression fixtures.
 - The three modified native translation units compiled with production Android ARM64
   flags; the combined launcher compiled against Android SDK 35.
+- `Code/Tests/music_player_runtime.cpp`: Android native player/event tests include direct
+  completion from idle/menu/map music, no repeated fade requests and subsequent rounds.
+  The same fixture can link against packaged `libmain.so` without compiling `MusicPlayer.cpp`
+  to verify the delivered body. Its Android additions do not change the existing Windows checks.
+- `Code/Tests/music_fade_android.cpp`: links to packaged `libBF2Audio.so`; the real Ogg worker
+  and OpenAL null output driver verify a five-second decreasing gain, final stop, unchanged
+  independent gameplay source/master/group volumes, and full-volume playback on the next round.
+  Supply an owned BF2-compatible Ogg or generate a non-game tone with
+  `python3 Code/Tests/make_music_fixture.py /absolute/path/tone.ogg` (requires ffmpeg).
+  The generator adjusts the Vorbis vendor string and Ogg checksum because the reader rejects
+  other vendor strings. The generated tone is not game content and is never packaged.
 
 These checks cover publication, decoding, drawing and lifecycle boundaries. A physical
 Thor run is still required to confirm the complete loading-to-deployment transition.

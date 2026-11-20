@@ -18,6 +18,10 @@ public:
     MusicPlayer();
     // Changes between idle, mod music, and map music using the supplied level path.
     void setState(int mode, const char* levelPath);
+#if defined(__ANDROID__)
+    // Ends direct-start loading music once a loaded level can accept gameplay input.
+    void finishDirectLoading();
+#endif
     // Ignores dedicated mode and categories other than 10; event 3 starts map music and 5 stops it.
     virtual void handleEvent(EventCategory category, unsigned int id, EventNode* node, void* data);
 

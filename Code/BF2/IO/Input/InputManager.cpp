@@ -4,6 +4,7 @@
 #include "../../IO/IInputFilter.h"
 #include "../../Core/Ids.h"                // [INFERRED] header name; the constants are attested
 #include "../../Core/Debug.h"              // the three constructor failure paths
+#include "../../PortShim/AndroidGameplayInput.h"
 
 #include <cstring>                         // memset - the constructor's explicit zero-fill
 
@@ -328,6 +329,9 @@ void InputManager::update(int tick, float deltaTime)
         if (gameControlMap == 0)
             gameControlMap = m_defaultGameControlMap;
         getGameInput(m_gameSamples[ringIndex], gameControlMap);
+#if defined(__ANDROID__) && !DEDICATED
+        androidcontrols::apply(playerInput, m_gameSamples[ringIndex]);
+#endif
 
         ++writeIndex;
     }

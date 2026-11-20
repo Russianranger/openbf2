@@ -3,9 +3,11 @@
 These checks cover the intentional Android controller behavior. They do not claim
 retail input recovery, physical Thor testing, GPU drawing, or complete playable-client validation.
 
-The Android framework fixture compiles the production `HandheldInput` and `PadState`
-sources and runs on Robolectric's Android 13 framework. It observes the SDL JNI boundary;
-the native pointer-state getter and hardware enumeration are fixture-controlled.
+The Android framework fixture compiles the production controller, tap/hold dispatcher,
+configuration model, editor and native Android menus. It runs on Robolectric's Android 13
+framework. SDL and named-action JNI output, native pointer/life/text snapshots, and hardware
+enumeration are observed fixture boundaries. Actual persistence and editor dialogs run in
+the Android framework.
 
 ```sh
 export ANDROID_HOME=/path/to/android-sdk
@@ -24,6 +26,34 @@ RT press/hold/release, release-before-rebind when changing menus/gameplay,
 continued relative gameplay aiming and WASD movement, Z/RZ and RX/RY stick layouts,
 GAS/BRAKE aliases, keyboard-labeled gamepad button events, duplicate button/axis
 trigger reports, disconnect/cancel cleanup, resolution changes and mixed touch input.
+It also checks exclusive B tap/hold actions, touch stance controls, native death-generation
+cleanup, Start-hold settings, modal RT release gating, persisted keyboard/D-pad/trigger
+assignments, bare Ctrl versus modifier shortcuts, text-entry passthrough, and roses that
+remain held while their pointer is visible. The editor tests cover duplicate controls,
+invalid settings, atomic save/reopen, capture, editing and restoring defaults.
+
+`Code/Tests/android_action_state_runtime.cpp` exercises the production native intent state:
+the standing/crouched/prone transitions, no preliminary crouch on a prone request, one-shot
+prone edges, scene/life/focus cleanup, swimming, text entry, full 64-bit action masks and held
+rose preservation. It uses no fabricated player object.
+
+```sh
+c++ -std=c++14 -DDEDICATED=0 -include Code/BF2/Core/BuildConfig.h \
+  -ICode/BF2 Code/Tests/android_action_state_runtime.cpp -o /tmp/action-state
+/tmp/action-state
+```
+
+`Code/Tests/android_action_mapping_runtime.cpp` exercises the actual production mapper with
+native `PlayerInput`/`GameInput` objects. Run the script below with a freshly built matching
+ARM64 native library directory. It checks exact mapped slots, edge versus continuous actions,
+initially unmapped samples, and stance inputs. The fixture does not create a player, run
+animation/physics, or claim a joined game session.
+
+```sh
+export ANDROID_NDK_HOME=/path/to/android-ndk
+bash Code/Tests/android_action_mapping_runtime.sh /path/to/arm64-libraries /tmp/action-map
+# Run /tmp/action-map/android-action-mapping on Android with those libraries in LD_LIBRARY_PATH.
+```
 
 The native check uses the actual portable Win32/DirectInput bridge and a static build
 of the pinned SDL source fetched by `android/build_native_engine.sh`. Its dummy window

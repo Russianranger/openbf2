@@ -22,11 +22,13 @@ out = args.out.resolve()
 out.mkdir(parents=True, exist_ok=True)
 tests = Path(__file__).resolve().parent
 thor = tests.parent
-for name in ("HandheldInput.java", "PadState.java", "PadMenuFrame.java"):
+for name in ("HandheldInput.java", "PadState.java", "PadMenuFrame.java", "ControllerBindings.java",
+             "ControllerBindingsActivity.java", "GameplayActions.java", "TapHoldBindings.java"):
     target = out / "src/main/java/com/mackillergr/bf2" / name
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(thor / "src/com/mackillergr/bf2" / name, target)
 for source, target in [(tests / "HandheldInputRuntimeTest.java", out / "src/test/java/com/mackillergr/bf2/HandheldInputRuntimeTest.java"),
+                       (tests / "ControllerBindingsAndroidTest.java", out / "src/test/java/com/mackillergr/bf2/ControllerBindingsAndroidTest.java"),
                        (tests / "PadMenuFrameAndroidTest.java", out / "src/test/java/com/mackillergr/bf2/PadMenuFrameAndroidTest.java"),
                        (tests / "fixtures/SDLActivity.java", out / "src/main/java/org/libsdl/app/SDLActivity.java")]:
     target.parent.mkdir(parents=True, exist_ok=True)

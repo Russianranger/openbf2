@@ -1,6 +1,7 @@
 // Server configuration and validation of console settings.
 
 #include "ServerSettings.h"
+#include "OfflineCoopBots.h"
 #include "ServerInfo.h"                     // the real ServerInfo - the mirrored flags below
 
 #include "../IGame.h"                        // real IGame - `game` carries its real type now
@@ -590,6 +591,9 @@ void ServerSettings::setCoopBotCount(int value)
     else
         clamped = 1;
 
+    offline_coop::BotCounts offline;
+    if (offline_coop::readBotCounts(offline))
+        clamped = std::max(0, std::min(value, int(offline_coop::maxBots)));
     m_coopBotCount = clamped;                           // +0xD4
 
 #if !DEDICATED

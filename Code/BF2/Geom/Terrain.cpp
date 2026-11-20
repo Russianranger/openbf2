@@ -1101,7 +1101,8 @@ void Terrain::loadLodTablesAndBaseGrid(TerrainRawReader& reader)
 {
     if (m_rawHasVersion && m_rawVersion >= 0x1Au)
     {
-        // 85 records of 400 bytes. The first 21 link to four children each (records 1+4i..4+4i)
+        // 85 records (400 bytes on x86, 416 with native 64-bit child pointers).
+        // The first 21 link to four children each (records 1+4i..4+4i)
         // and read their three 64-byte rows as u32 pairs in the shipped interleaving; records 21..84
         // are read as plain (row, row+192) pairs.
         m_lodTables = static_cast<unsigned char*>(::renddx9abi::engineAlloc(85 * kTerrainLodRecordBytes));
@@ -1141,7 +1142,10 @@ void Terrain::loadLodTablesAndBaseGrid(TerrainRawReader& reader)
         }
         if (record < 85)
         {
-            for (int o = 400 * record; o < 34000; o += 400)
+            // The leaf records use the same native stride as their parent links. A retail
+            // 400-byte stride here overwrites parent 20 and misplaces every 64-bit leaf range.
+            for (int o = kTerrainLodRecordBytes * record; o < 85 * kTerrainLodRecordBytes;
+                 o += kTerrainLodRecordBytes)
             {
                 unsigned char* const table = m_lodTables + o;
                 ::memset(table, 0, kTerrainLodRecordBytes);

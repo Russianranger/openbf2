@@ -26,9 +26,9 @@ public class TouchOverlay extends View {
         new Button("Sprint", KeyEvent.KEYCODE_SHIFT_LEFT, 0.70f, 0.86f),
         new Button("Reload", KeyEvent.KEYCODE_R, 0.80f, 0.60f),
         new Button("Use", KeyEvent.KEYCODE_E, 0.70f, 0.66f),
-        new Button("Score", KeyEvent.KEYCODE_TAB, 0.95f, 0.10f),
-        new Button("OK", KeyEvent.KEYCODE_ENTER, 0.86f, 0.10f),
-        new Button("Menu", KeyEvent.KEYCODE_ESCAPE, 0.05f, 0.10f),
+        new Button("Score", KeyEvent.KEYCODE_TAB, 0.05f, 0.35f),
+        new Button("OK", KeyEvent.KEYCODE_ENTER, 0.95f, 0.38f),
+        new Button("Menu", KeyEvent.KEYCODE_ESCAPE, 0.05f, 0.23f),
     };
     private final HashMap<Integer, float[]> look = new HashMap<>();
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), text = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -87,7 +87,6 @@ public class TouchOverlay extends View {
     private boolean introSkipVisible;
     private boolean introSkipHeld;
     private int introSkipPointer = -1;
-    private int logPointer = -1;
     private long skipPressedAt = 0L;
     private final Runnable releaseSkip = () -> {
         if (introSkipPointer == -1 && introSkipHeld) {
@@ -136,14 +135,17 @@ public class TouchOverlay extends View {
         super.onDetachedFromWindow();
     }
     private void releaseAll() {
-        for (Button b : buttons) if (b.pointer >= 0) { b.pointer = -1; press(b, false); }
+        for (Button b : buttons) if (b.pointer >= 0) {
+            b.pointer = -1;
+            if (b.key == KeyEvent.KEYCODE_CTRL_LEFT && controller != null) controller.cancelTouchCrouch();
+            else press(b, false);
+        }
         removeCallbacks(releaseSkip);
         introSkipPointer = -1;
         if (introSkipHeld) {
             introSkipHeld = false;
             key(KeyEvent.KEYCODE_ESCAPE, false);
         }
-        logPointer = -1;
         if (menuPressed) SDLActivity.onNativeMouse(0, MOUSE_UP, menuX, menuY, false);
         menuPressed = false;
         menuPointer = -1;
@@ -210,10 +212,10 @@ public class TouchOverlay extends View {
     private void drawSkipButton(Canvas canvas) {
         float x = skipCenterX(), y = skipCenterY();
         float w = skipWidth(), h = skipHeight();
-        fill.setColor(Color.argb(introSkipPointer >= 0 ? 245 : 212, 24, 25, 24));
+        fill.setColor(Color.argb(introSkipPointer >= 0 ? 240 : 210, 30, 37, 39));
         canvas.drawRoundRect(x - w * 0.5f, y - h * 0.5f,
                 x + w * 0.5f, y + h * 0.5f, h * 0.19f, h * 0.19f, fill);
-        fill.setColor(Color.rgb(255, 200, 0));
+        fill.setColor(Color.rgb(215, 198, 154));
         fill.setStyle(Paint.Style.STROKE);
         fill.setStrokeWidth(Math.max(2f, h * 0.035f));
         canvas.drawRoundRect(x - w * 0.5f, y - h * 0.5f,
@@ -221,20 +223,6 @@ public class TouchOverlay extends View {
         fill.setStyle(Paint.Style.FILL);
         text.setTextSize(h * 0.36f);
         canvas.drawText("SKIP INTRO", x, y + h * 0.13f, text);
-    }
-    private float logCenterX() { return getWidth() * 0.90f; }
-    private float logCenterY() { return getHeight() * 0.12f; }
-    private boolean onLogButton(float x, float y) {
-        return Math.abs(x - logCenterX()) < skipWidth() * 0.28f
-                && Math.abs(y - logCenterY()) < skipHeight() * 0.57f;
-    }
-    private void drawLogButton(Canvas c) {
-        float x = logCenterX(), y = logCenterY();
-        float w = skipWidth() * 0.56f, h = skipHeight();
-        fill.setColor(Color.argb(215, 23, 23, 23));
-        c.drawRoundRect(x-w*0.5f,y-h*0.5f,x+w*0.5f,y+h*0.5f,h*0.2f,h*0.2f,fill);
-        text.setTextSize(h * 0.36f);
-        c.drawText("LOG", x, y + h * 0.12f, text);
     }
     private void releaseSkipTouch() {
         introSkipPointer = -1;
@@ -244,16 +232,11 @@ public class TouchOverlay extends View {
         postDelayed(releaseSkip, Math.max(0L, 180L - elapsed));
         invalidate();
     }
-    private void exportGameLog() {
-        if (getContext() instanceof GameActivity)
-            ((GameActivity)getContext()).exportGameLog();
-    }
     private float radius() { return getHeight() * 0.075f; }
     private float stickRadius() { return getHeight() * 0.16f; }
     private float baseX() { return getWidth() * 0.14f; }
     private float baseY() { return getHeight() * 0.72f; }
     private boolean pointerMode() { return menu || phase == AndroidUiState.MENU; }
-    private boolean logVisible() { return phase == AndroidUiState.MENU || phase == AndroidUiState.INTRO; }
     private boolean loading() { return phase == AndroidUiState.STARTING || phase == AndroidUiState.LOADING; }
     private boolean controllerCursorVisible() {
         return inputActive && !loading() && phase != AndroidUiState.INTRO
@@ -287,40 +270,52 @@ public class TouchOverlay extends View {
         drawControllerCursor(c);
     }
     private void drawTouchControls(Canvas c) {
-        if (!controlsVisible || loading()) return;
+        if (!inputActive || !controlsVisible || loading()) return;
         if (phase == AndroidUiState.INTRO) {
             if (introSkipVisible) drawSkipButton(c);
-            if (logVisible()) drawLogButton(c);
             return;
         }
         if (pointerMode()) {
-            fill.setColor(Color.argb(80, 255, 255, 255));
-            c.drawCircle(keyboardX(), keyboardY(), radius(), fill);
-            text.setTextSize(radius() * 0.42f);
-            c.drawText("ABC", keyboardX(), keyboardY() + radius() * 0.15f, text);
-            if (logVisible()) drawLogButton(c);
+            drawControl(c, "ABC", keyboardX(), keyboardY(), false);
             if (lastTapX >= 0) {
-                fill.setColor(Color.argb(175, 255, 200, 0));
+                fill.setColor(Color.argb(175, 215, 198, 154));
                 c.drawCircle(lastTapX, lastTapY, Math.max(5f, radius()*0.09f), fill);
             }
             return;
         }
-        fill.setColor(Color.argb(60, 255, 255, 255));
+        fill.setColor(Color.argb(60, 23, 29, 32));
         c.drawCircle(baseX(), baseY(), stickRadius(), fill);
-        fill.setColor(Color.argb(110, 255, 255, 255));
+        fill.setStyle(Paint.Style.STROKE); fill.setStrokeWidth(Math.max(1.5f, radius() * .025f));
+        fill.setColor(Color.argb(125, 215, 198, 154));
+        c.drawCircle(baseX(), baseY(), stickRadius(), fill);
+        fill.setStyle(Paint.Style.FILL);
+        fill.setColor(Color.argb(110, 168, 160, 132));
         c.drawCircle(stickPointer >= 0 ? knobX : baseX(), stickPointer >= 0 ? knobY : baseY(), radius() * 0.8f, fill);
-        text.setTextSize(radius() * 0.42f);
         for (Button b : buttons) {
             float x = b.rx * getWidth(), y = b.ry * getHeight();
-            fill.setColor(b.pointer >= 0 ? Color.argb(150, 255, 170, 40) : Color.argb(80, 255, 255, 255));
-            c.drawCircle(x, y, radius(), fill);
-            c.drawText(b.label, x, y + radius() * 0.15f, text);
+            drawControl(c, b.label.toUpperCase(java.util.Locale.ROOT), x, y, b.pointer >= 0);
         }
+    }
+    private void drawControl(Canvas c, String label, float x, float y, boolean pressed) {
+        float rx = radius() * .9f, ry = radius() * .65f, corner = radius() * .08f;
+        fill.setStyle(Paint.Style.FILL);
+        fill.setColor(pressed ? Color.argb(180, 113, 99, 68) : Color.argb(105, 23, 29, 32));
+        c.drawRoundRect(x-rx, y-ry, x+rx, y+ry, corner, corner, fill);
+        fill.setStyle(Paint.Style.STROKE); fill.setStrokeWidth(Math.max(1.5f, radius() * .025f));
+        fill.setColor(Color.argb(pressed ? 230 : 150, 215, 198, 154));
+        c.drawRoundRect(x-rx, y-ry, x+rx, y+ry, corner, corner, fill);
+        fill.setStyle(Paint.Style.FILL);
+        text.setTextSize(radius() * .34f); text.setColor(Color.rgb(228, 231, 223));
+        c.drawText(label, x, y + radius() * .12f, text);
     }
     private void key(int code, boolean down) {
         if (down) SDLActivity.onNativeKeyDown(code); else SDLActivity.onNativeKeyUp(code);
     }
     private void press(Button b, boolean down) {
+        if (b.key == KeyEvent.KEYCODE_CTRL_LEFT && controller != null) {
+            controller.touchCrouch(down);
+            return;
+        }
         // SDL takes the button state after the event, so a release carries 0.
         if (b.key == 0) SDLActivity.onNativeMouse(down ? LEFT_BUTTON : 0, down ? MOUSE_DOWN : MOUSE_UP, 0, 0, true);
         else key(b.key, down);
@@ -393,25 +388,14 @@ public class TouchOverlay extends View {
                 invalidate();
                 return true;
             }
-            if (logVisible() && logPointer == -1 && onLogButton(x, y)) {
-                logPointer = id;
-                invalidate();
-                return true;
-            }
         } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
             int id = e.getPointerId(index);
             if (id == introSkipPointer) {
                 releaseSkipTouch();
                 return true;
             }
-            if (id == logPointer) {
-                logPointer = -1;
-                post(this::exportGameLog);
-                invalidate();
-                return true;
-            }
         }
-        if (introSkipPointer != -1 || logPointer != -1) return true;
+        if (introSkipPointer != -1) return true;
         if (phase == AndroidUiState.INTRO) return true;
         if (pointerMode()) { menuTouch(e); return true; }
         switch (action) {

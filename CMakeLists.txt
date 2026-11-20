@@ -173,6 +173,7 @@ list(REMOVE_ITEM bf2_engine_sources "${BF2_ROOT}/VoipServer/BF2VoipServerShell.c
 # carries the mirror list). Client-only REGIONS of shared TUs are not a manifest matter: they sit
 # under #if !DEDICATED, and bf2_set_image() below is what selects them per target.
 set(bf2_client_only_sources
+    "${BF2_ROOT}/PortShim/AndroidGameplayInput.cpp"
     "${BF2_ROOT}/PortShim/Win32OnSdl.cpp"
     "${BF2_ROOT}/PortShim/ClientFrontiers.cpp"
     "${BF2_ROOT}/PortShim/ClientHaptics.cpp"

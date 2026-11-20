@@ -13,12 +13,14 @@ public final class GameActivity extends SDLActivity {
     private HandheldInput pad;
     private TouchOverlay overlay;
     private GameLoadingView loading;
+    private GameOptionsView optionsMenu;
     private boolean showTouchControls = true;
     private boolean resumed;
+    private boolean endingSession;
     private boolean surfaceReady;
     private static native void nativePresentationReady(boolean ready);
     private void updatePresentation(boolean focused) {
-        if (!mBrokenLibraries) nativePresentationReady(resumed && focused && surfaceReady);
+        if (!mBrokenLibraries) nativePresentationReady(resumed && focused && surfaceReady && !optionsOpen());
     }
     @Override protected org.libsdl.app.SDLSurface createSDLSurface(android.content.Context context) {
         return new org.libsdl.app.SDLSurface(context) {
@@ -42,9 +44,17 @@ public final class GameActivity extends SDLActivity {
     }
     private android.net.wifi.WifiManager.MulticastLock lanLock;
     @Override public boolean dispatchKeyEvent(android.view.KeyEvent e) {
+        if (optionsOpen()) {
+            if (pad != null) pad.key(e); // Observe releases while its game input is disabled.
+            return optionsMenu.key(e);
+        }
         return pad != null && pad.key(e) || super.dispatchKeyEvent(e);
     }
     @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent e) {
+        if (optionsOpen()) {
+            if (pad != null) pad.motion(e);
+            return optionsMenu.motion(e);
+        }
         return pad != null && pad.motion(e) || super.dispatchGenericMotionEvent(e);
     }
     @Override protected void onPause() {
@@ -68,6 +78,15 @@ public final class GameActivity extends SDLActivity {
     }
     @Override protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+        if (intent.getBooleanExtra("endSession", false)) {
+            endingSession = true;
+            resumed = false;
+            setUiActive(false); updatePresentation(false);
+            returnToLauncher();
+            finish(); // SDL's normal destroy path quits the native thread and releases GameSession.
+            return;
+        }
+        if (optionsMenu != null) optionsMenu.setOpen(false);
         if (intent.hasExtra("touch")) {
             showTouchControls = intent.getBooleanExtra("touch", true);
             // Keep the original launch arguments when the launcher resumes this :game process.
@@ -80,8 +99,24 @@ public final class GameActivity extends SDLActivity {
         super.onSaveInstanceState(state);
     }
     private void setUiActive(boolean active) {
-        if (overlay != null) overlay.setInputActive(active);
+        boolean playing = active && !optionsOpen();
+        if (pad != null) pad.setInputActive(playing);
+        if (overlay != null) overlay.setInputActive(playing);
         if (loading != null) loading.setActive(active);
+    }
+    private boolean optionsOpen() { return optionsMenu != null && optionsMenu.isOpen(); }
+    private void toggleGearMenu() { if (optionsMenu != null) optionsMenu.toggle(); }
+    private void optionsChanged(boolean open) {
+        setUiActive(resumed && hasWindowFocus());
+        updatePresentation(hasWindowFocus());
+        if (overlay != null) overlay.setImportantForAccessibility(open
+                ? android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                : android.view.View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
+    }
+    private void returnToLauncher() {
+        android.content.Intent launcher = new android.content.Intent(this, LauncherActivity.class);
+        launcher.addFlags(android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        startActivity(launcher);
     }
     @Override protected void onDestroy() {
         resumed = false;
@@ -91,7 +126,12 @@ public final class GameActivity extends SDLActivity {
             if (overlay != null) { overlay.setInputActive(false); overlay = null; }
             if (loading != null) { loading.close(); loading = null; }
             super.onDestroy();
-        } finally { LanWifi.release(lanLock); GameSession.release(); }
+        } finally {
+            LanWifi.release(lanLock); GameSession.release();
+            // A deliberate new match needs fresh BF2 globals, not another SDL main in this VM.
+            // GameActivity is isolated in :game; the launcher is already brought to the front.
+            if (endingSession) android.os.Process.killProcess(android.os.Process.myPid());
+        }
     }
     private static final String TAG = "BF2Stage3";
 
@@ -144,7 +184,9 @@ public final class GameActivity extends SDLActivity {
         // Always call Activity.onCreate before finish() to avoid SuperNotCalledException.
         if (args == null || args.length == 0) {
             Log.e(TAG, "No arguments supplied; refusing game start");
+            endingSession = true; // A stale resume intent must not poison the next SDL startup.
             super.onCreate(state);
+            returnToLauncher();
             finish();
             return;
         }
@@ -164,7 +206,10 @@ public final class GameActivity extends SDLActivity {
                 ? state.getBoolean("touch") : getIntent().getBooleanExtra("touch", true);
         // Feed touchscreen taps to SDL3 as PC mouse moves/clicks.
         // menuShown() switches automatically between Flash-menu pointing and FPS controls.
-        if (!mBrokenLibraries) pad = new HandheldInput(this);
+        if (!mBrokenLibraries) {
+            pad = new HandheldInput(this);
+            pad.setGearMenu(this::toggleGearMenu);
+        }
         if (!mBrokenLibraries) {
             loading = new GameLoadingView(this, args);
             addContentView(loading, new ViewGroup.LayoutParams(
@@ -178,6 +223,13 @@ public final class GameActivity extends SDLActivity {
             overlay.setGameResolution(gameWidth, gameHeight);
             Log.i("BF2MenuTouch", "gameWidth=" + gameWidth + " gameHeight=" + gameHeight);
             addContentView(overlay, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            optionsMenu = new GameOptionsView(this, new GameOptionsView.Actions() {
+                @Override public void opened(boolean open) { optionsChanged(open); }
+                @Override public void exportLogs() { exportGameLog(); }
+                @Override public void launcher() { returnToLauncher(); }
+            });
+            addContentView(optionsMenu, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
     }

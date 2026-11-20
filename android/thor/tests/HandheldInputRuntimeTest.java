@@ -3,11 +3,14 @@ package com.mackillergr.bf2;
 import android.app.Activity;
 import android.hardware.input.InputManager;
 import android.os.Handler;
+import android.os.Looper;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.ArrayList;
+import java.time.Duration;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -29,18 +32,29 @@ import static org.junit.Assert.*;
  * JNI input/output and device enumeration are the observed fixture boundaries. */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33, manifest=Config.NONE, shadows={HandheldInputRuntimeTest.Mode.class,
+        HandheldInputRuntimeTest.Actions.class,
         HandheldInputRuntimeTest.Device.class, HandheldInputRuntimeTest.Devices.class})
 @LooperMode(LooperMode.Mode.PAUSED)
 public class HandheldInputRuntimeTest {
     static final Map<Integer,InputDevice> connected = new HashMap<>();
     static boolean menu;
     static int listeners;
+    static int nativeState;
+    static final ArrayList<String> actions = new ArrayList<>();
     HandheldInput pad;
     Activity activity;
 
     @Implements(value=HandheldInput.class, isInAndroidSdk=false)
     public static class Mode {
         @Implementation protected static boolean pointerShown() { return menu; }
+    }
+    @Implements(value=GameplayActions.class,isInAndroidSdk=false)
+    public static class Actions {
+        @Implementation protected static void nativeAction(int id,boolean down) {
+            actions.add(ControllerBindings.Action.values()[id].name()+(down?"+":"-"));
+        }
+        @Implementation protected static void nativeReset() { }
+        @Implementation protected static int nativeState() { return nativeState; }
     }
     @Implements(InputDevice.class)
     public static class Device extends ShadowInputDevice {
@@ -76,6 +90,7 @@ public class HandheldInputRuntimeTest {
     }
     @Before public void setup() {
         connected.clear(); connected.put(7,controller(7,false,false)); listeners=0; menu=true;
+        actions.clear();nativeState=0x111;
         SDLActivity.clear();
         activity=Robolectric.buildActivity(Activity.class).setup().get();
         activity.getWindow().getDecorView().layout(0,0,1920,1080);
@@ -97,6 +112,7 @@ public class HandheldInputRuntimeTest {
     }
     void trigger(float value) { move(7,InputDevice.SOURCE_JOYSTICK,MotionEvent.AXIS_RTRIGGER,value); }
     static int count(int action) { return (int)SDLActivity.mouse.stream().filter(e -> e.action==action).count(); }
+    void advance(long ms) { org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ms)); }
     void button(int action,int key,int source) {
         KeyEvent e=new KeyEvent(0,1,action,key,0,0,7,0,0,source);
         ((org.robolectric.shadows.ShadowInputEvent)org.robolectric.shadow.api.Shadow.extract(e)).setDevice(connected.get(7));
@@ -122,7 +138,7 @@ public class HandheldInputRuntimeTest {
         assertEquals(1,count(MotionEvent.ACTION_UP)); assertFalse(SDLActivity.lastMouse().relative);
         trigger(.8f); trigger(.35f); assertEquals(0,count(MotionEvent.ACTION_DOWN));
         trigger(0); trigger(.8f);
-        assertEquals(1,count(MotionEvent.ACTION_DOWN)); assertTrue(SDLActivity.lastMouse().relative);
+        assertEquals(0,count(MotionEvent.ACTION_DOWN)); assertTrue(actions.contains("FIRE+"));
         trigger(0); SDLActivity.clear();
         move(7,InputDevice.SOURCE_JOYSTICK,MotionEvent.AXIS_X,-1,MotionEvent.AXIS_Z,1);
         pad.doFrame(2000000000L);
@@ -157,5 +173,121 @@ public class HandheldInputRuntimeTest {
         assertTrue(pad.motion(cancel)); cancel.recycle();
         assertEquals(2,count(MotionEvent.ACTION_UP));
         assertFalse(pad.key(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_VOLUME_UP)));
+    }
+    @Test public void defaultBTapAndHoldAreExclusiveAndTouchUsesSamePath() {
+        menu=false;pad.cursorVisible();
+        button(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BUTTON_B,InputDevice.SOURCE_GAMEPAD);
+        advance(200);assertTrue(actions.isEmpty());
+        button(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BUTTON_B,InputDevice.SOURCE_GAMEPAD);
+        assertEquals(java.util.Arrays.asList("CROUCH_TOGGLE+"),actions);
+        advance(60);assertEquals(java.util.Arrays.asList("CROUCH_TOGGLE+","CROUCH_TOGGLE-"),actions);
+        actions.clear();
+        button(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BUTTON_B,InputDevice.SOURCE_GAMEPAD);
+        advance(449);assertTrue(actions.isEmpty());advance(1);
+        assertEquals(java.util.Arrays.asList("PRONE+"),actions);
+        button(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BUTTON_B,InputDevice.SOURCE_GAMEPAD);
+        advance(300);assertEquals(1,actions.size());
+        button(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BUTTON_B,InputDevice.SOURCE_GAMEPAD);
+        assertEquals(java.util.Arrays.asList("PRONE+","PRONE-"),actions);
+        actions.clear();pad.touchCrouch(true);advance(100);pad.touchCrouch(false);advance(60);
+        assertEquals(java.util.Arrays.asList("CROUCH_TOGGLE+","CROUCH_TOGGLE-"),actions);
+        actions.clear();pad.touchCrouch(true);pad.cancelTouchCrouch();advance(500);
+        assertTrue(actions.isEmpty());
+    }
+    @Test public void deathFocusAndGearCancelPendingOrHeldActions() {
+        menu=false;pad.cursorVisible();
+        button(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BUTTON_B,InputDevice.SOURCE_GAMEPAD);
+        nativeState=0x200;advance(500);assertTrue(actions.isEmpty());
+        button(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BUTTON_B,InputDevice.SOURCE_GAMEPAD);
+        nativeState=0x311;pad.cursorVisible();
+        final int[] gear={0};pad.setGearMenu(() -> {gear[0]++;pad.setInputActive(false);});
+        button(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BUTTON_START,InputDevice.SOURCE_GAMEPAD);
+        advance(450);assertEquals(1,gear[0]);assertFalse(SDLActivity.keys.contains("111+"));
+        assertFalse(pad.key(new KeyEvent(0,1,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BUTTON_START,0,0,7,0,0,InputDevice.SOURCE_GAMEPAD)));
+        MotionEvent close=event(7,InputDevice.SOURCE_JOYSTICK,MotionEvent.ACTION_MOVE,MotionEvent.AXIS_RTRIGGER,.9f);
+        assertFalse(pad.motion(close));close.recycle();
+        pad.setInputActive(true);trigger(.9f);assertTrue(actions.isEmpty());
+        trigger(0);trigger(.9f);assertEquals(java.util.Arrays.asList("FIRE+"),actions);
+        pad.setInputActive(false);assertEquals(java.util.Arrays.asList("FIRE+","FIRE-"),actions);
+    }
+    @Test public void savedKeyboardHatTriggerActionsAndDuplicateReports() throws Exception {
+        ControllerBindings config=ControllerBindings.defaults();
+        config.set(new ControllerBindings.Binding(KeyEvent.KEYCODE_Q,ControllerBindings.Action.WEAPON_NEXT,ControllerBindings.Action.NONE));
+        config.set(new ControllerBindings.Binding(KeyEvent.KEYCODE_DPAD_UP,ControllerBindings.Action.MAP,ControllerBindings.Action.NONE));
+        config.set(new ControllerBindings.Binding(KeyEvent.KEYCODE_BUTTON_X,ControllerBindings.Action.NONE,ControllerBindings.Action.RELOAD));
+        config.save(activity);pad.setInputActive(false);pad.setInputActive(true);menu=false;pad.cursorVisible();trigger(0);
+        assertTrue(pad.key(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_Q)));
+        assertTrue(pad.key(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_Q)));
+        assertEquals(java.util.Arrays.asList("WEAPON_NEXT+","WEAPON_NEXT-"),actions);
+        assertFalse(pad.key(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_T)));
+        actions.clear();move(7,InputDevice.SOURCE_JOYSTICK,MotionEvent.AXIS_HAT_Y,-1);
+        move(7,InputDevice.SOURCE_JOYSTICK,MotionEvent.AXIS_HAT_Y,0);
+        assertEquals(java.util.Arrays.asList("MAP+","MAP-"),actions);
+        actions.clear();button(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BUTTON_R2,InputDevice.SOURCE_GAMEPAD);
+        trigger(.8f);button(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BUTTON_R2,InputDevice.SOURCE_GAMEPAD);
+        assertEquals(java.util.Arrays.asList("FIRE+"),actions);trigger(0);
+        assertEquals(java.util.Arrays.asList("FIRE+","FIRE-"),actions);
+        actions.clear();button(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BUTTON_X,InputDevice.SOURCE_GAMEPAD);
+        advance(450);assertEquals(java.util.Arrays.asList("RELOAD+"),actions);
+        button(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BUTTON_X,InputDevice.SOURCE_GAMEPAD);
+        assertEquals(java.util.Arrays.asList("RELOAD+","RELOAD-"),actions);
+    }
+    @Test public void keyboardCtrlTogglePreservesShortcutsAndNativeTextEditing() {
+        menu=false;pad.cursorVisible();
+        assertTrue(pad.key(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_CTRL_LEFT)));
+        advance(200);assertTrue(actions.isEmpty());
+        assertTrue(pad.key(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_CTRL_LEFT)));
+        assertEquals(java.util.Arrays.asList("CROUCH_TOGGLE+"),actions);advance(60);actions.clear();
+        assertTrue(pad.key(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_CTRL_LEFT)));
+        KeyEvent shortcut=new KeyEvent(0,1,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_C,0,KeyEvent.META_CTRL_ON);
+        assertFalse(pad.key(shortcut));assertTrue(SDLActivity.keys.contains(KeyEvent.KEYCODE_CTRL_LEFT+"+"));
+        assertTrue(pad.key(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_CTRL_LEFT)));
+        advance(500);assertTrue(actions.isEmpty());assertTrue(SDLActivity.keys.contains(KeyEvent.KEYCODE_CTRL_LEFT+"-"));
+        nativeState=0x291;pad.cursorVisible(); // Console/chat/squad name editor active.
+        assertFalse(pad.key(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_CTRL_LEFT)));
+        assertFalse(pad.key(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_Z)));
+        assertFalse(pad.key(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_Z)));
+        assertFalse(pad.key(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_CTRL_LEFT)));
+        assertTrue(actions.isEmpty());
+        nativeState=0x311;pad.cursorVisible();
+        assertTrue(pad.key(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_Z)));
+        assertTrue(pad.key(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_Z)));
+        assertEquals(java.util.Arrays.asList("PRONE+","PRONE-"),actions);
+    }
+    @Test public void commRoseHoldSurvivesPointerModeAndDpadRelease() throws Exception {
+        ControllerBindings config=ControllerBindings.defaults();
+        config.set(new ControllerBindings.Binding(KeyEvent.KEYCODE_DPAD_UP,ControllerBindings.Action.COMM_ROSE,ControllerBindings.Action.NONE));
+        config.save(activity);pad.setInputActive(false);pad.setInputActive(true);menu=false;pad.cursorVisible();trigger(0);
+        move(7,InputDevice.SOURCE_JOYSTICK,MotionEvent.AXIS_HAT_Y,-1);
+        assertEquals(java.util.Arrays.asList("COMM_ROSE+"),actions);
+        menu=true;pad.cursorVisible(); // Native keeps the same life epoch for an active HUD rose.
+        assertEquals(java.util.Arrays.asList("COMM_ROSE+"),actions);
+        move(7,InputDevice.SOURCE_JOYSTICK,MotionEvent.AXIS_HAT_Y,-1,MotionEvent.AXIS_Z,.5f);pad.doFrame(1000000000L);
+        assertFalse(SDLActivity.lastMouse().relative);
+        move(7,InputDevice.SOURCE_JOYSTICK,MotionEvent.AXIS_HAT_Y,0);
+        assertEquals(java.util.Arrays.asList("COMM_ROSE+","COMM_ROSE-"),actions);
+    }
+    @Test public void shortRoseTapPulseEndsAfterPointerTransition() throws Exception {
+        ControllerBindings config=ControllerBindings.defaults();
+        config.set(new ControllerBindings.Binding(KeyEvent.KEYCODE_BUTTON_X,ControllerBindings.Action.COMM_ROSE,ControllerBindings.Action.USE));
+        config.save(activity);pad.setInputActive(false);pad.setInputActive(true);menu=false;pad.cursorVisible();trigger(0);
+        button(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BUTTON_X,InputDevice.SOURCE_GAMEPAD);
+        button(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BUTTON_X,InputDevice.SOURCE_GAMEPAD);
+        assertEquals(java.util.Arrays.asList("COMM_ROSE+"),actions);
+        menu=true;pad.cursorVisible();advance(60);
+        assertEquals(java.util.Arrays.asList("COMM_ROSE+","COMM_ROSE-"),actions);
+    }
+    @Test public void sharedActionBindingsDoNotReleaseEachOtherAndNoneIsConsumed() throws Exception {
+        ControllerBindings config=ControllerBindings.defaults();
+        config.set(new ControllerBindings.Binding(KeyEvent.KEYCODE_BUTTON_A,ControllerBindings.Action.FIRE,ControllerBindings.Action.NONE));
+        config.set(new ControllerBindings.Binding(KeyEvent.KEYCODE_BUTTON_B,ControllerBindings.Action.NONE,ControllerBindings.Action.NONE));
+        config.save(activity);pad.setInputActive(false);pad.setInputActive(true);menu=false;pad.cursorVisible();trigger(0);
+        button(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BUTTON_A,InputDevice.SOURCE_GAMEPAD);trigger(.9f);
+        button(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BUTTON_A,InputDevice.SOURCE_GAMEPAD);
+        assertEquals(java.util.Arrays.asList("FIRE+"),actions);trigger(0);
+        assertEquals(java.util.Arrays.asList("FIRE+","FIRE-"),actions);actions.clear();
+        button(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BUTTON_B,InputDevice.SOURCE_GAMEPAD);advance(600);
+        button(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BUTTON_B,InputDevice.SOURCE_GAMEPAD);
+        assertTrue(actions.isEmpty());
     }
 }

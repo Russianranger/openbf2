@@ -3,6 +3,7 @@
 #include "BF2.h"
 #if defined(__ANDROID__) && !DEDICATED
 #include "AndroidUiState.h"
+#include "../GameServer/OfflineCoopBots.h"
 #endif
 
 #include "BF2Engine.h"                              // [INFERRED] path: Game/Main/BF2Engine.cpp is
@@ -759,6 +760,7 @@ void installAndroidCrashReport()
 static std::string androidCommandLine(int argc, char** argv)
 {
     std::string mod, width = "1280", height = "720", name, level, server, libraryDir, driver;
+    std::string team1Bots = "8", team2Bots = "8";
     bool hosted = false, menu = false, coop = false;
     for (int i = 1; i < argc; ++i)
     {
@@ -776,6 +778,8 @@ static std::string androidCommandLine(int argc, char** argv)
         else if (option == "--connect") server = value;
         else if (option == "--libdir") libraryDir = value;
         else if (option == "--driver") driver = value;
+        else if (option == "--team1-bots") team1Bots = value;
+        else if (option == "--team2-bots") team2Bots = value;
         else if (option == "--cdkey") setenv("BF2_PORT_CDKEY", value, 1);
     }
     const char* const files = SDL_GetAndroidExternalStoragePath();
@@ -794,9 +798,25 @@ static std::string androidCommandLine(int argc, char** argv)
     else
         unsetenv("BF2_PORT_DIRECT_START");
     if (!menu && hosted && coop)
+    {
+        dice::hfe::offline_coop::BotCounts counts;
+        if (!dice::hfe::offline_coop::parseCount(team1Bots.c_str(), counts.team1) ||
+            !dice::hfe::offline_coop::parseCount(team2Bots.c_str(), counts.team2) ||
+            counts.total() > dice::hfe::offline_coop::maxBots)
+        {
+            std::fprintf(stderr, "OpenBF2: invalid offline bot counts (maximum total 63)\n");
+            return std::string();
+        }
         setenv("BF2_PORT_LOCAL_COOP", "1", 1);
+        setenv("BF2_PORT_COOP_TEAM1_BOTS", team1Bots.c_str(), 1);
+        setenv("BF2_PORT_COOP_TEAM2_BOTS", team2Bots.c_str(), 1);
+    }
     else
+    {
         unsetenv("BF2_PORT_LOCAL_COOP");
+        unsetenv("BF2_PORT_COOP_TEAM1_BOTS");
+        unsetenv("BF2_PORT_COOP_TEAM2_BOTS");
+    }
     setenv("DXVK_WSI_DRIVER", "SDL3", 1);
     setenv("DXVK_LOG_LEVEL", "warn", 1);
     setenv("DXVK_HUD", "fps,frametimes,memory", 1);
@@ -865,10 +885,14 @@ static std::string androidCommandLine(int argc, char** argv)
         std::fputs("sv.voipEnabled 0\nsv.serverPort 16567\nsv.internet 0\nsv.numPlayersNeededToStart 1\n", out);
         if (coop)
         {
+            dice::hfe::offline_coop::BotCounts counts;
+            dice::hfe::offline_coop::readBotCounts(counts); // Validated above.
             std::fputs("sv.serverIP \"127.0.0.1\"\nsv.interfaceIP \"127.0.0.1\"\n"
-                       "sv.coopBotCount 16\nsv.coopBotRatio 50\nsv.coopBotDifficulty 50\n"
+                       "sv.autoBalanceTeam 0\nsv.coopBotDifficulty 50\n"
                        "sv.useGlobalRank 0\nsv.useGlobalUnlocks 0\n"
                        "sv.adminScript \"bf2_offline_career\"\n", out);
+            std::fprintf(out, "sv.coopBotCount %d\nsv.coopBotRatio %.9g\n",
+                         counts.total(), counts.total() ? 100.0 * counts.team1 / counts.total() : 0.0);
             line += " +ai 1";
         }
         const bool writeFailed = std::ferror(out) != 0;
@@ -881,13 +905,13 @@ static std::string androidCommandLine(int argc, char** argv)
         appendCommandLineArg(line, level.c_str(), false);
         line += " +gameMode ";
         line += mode;
-        line += " +maxPlayers 16 +mapList";
+        line += coop ? " +maxPlayers 1 +mapList" : " +maxPlayers 16 +mapList";
         appendCommandLineArg(line, mapList.c_str(), false);
         line += " +config";
         appendCommandLineArg(line, settings.c_str(), false);
         if (coop)
-            std::fprintf(stderr, "OpenBF2 offline co-op: map=%s mode=%s bots=16 listen=127.0.0.1\n",
-                         level.c_str(), mode);
+            std::fprintf(stderr, "OpenBF2 offline co-op: map=%s mode=%s team1Bots=%s team2Bots=%s humanSlots=1 listen=127.0.0.1\n",
+                         level.c_str(), mode, team1Bots.c_str(), team2Bots.c_str());
     }
     else
     {

@@ -166,6 +166,19 @@ void MusicPlayer::handleEvent(EventCategory category, unsigned int id, EventNode
     }
 }
 
+#if defined(__ANDROID__)
+void MusicPlayer::finishDirectLoading()
+{
+    // [CHOSEN, not recovered] Direct co-op has no Flash loading movie to send event 5.
+    // Reuse its music-only fade and idle transition. A later map event starts a new track.
+    if (m_state == 0)
+        return;
+    std::fprintf(stderr, "[MUSIC] direct loading complete: fade music over 5 seconds\n");
+    std::fflush(stderr);
+    setState(3, nullptr);
+}
+#endif
+
 } // namespace hfe
 } // namespace dice
 
