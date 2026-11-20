@@ -8,8 +8,9 @@ public final class LaunchPlanTest {
     public static void main(String[] roots) {
         List<String> coop = Arrays.asList(GameLaunchPlan.forCoop("/game/mods/bf2", "/native", 1920, 1080,
                 "Player", "turnip", "strike_at_karkand"));
-        if (!coop.subList(coop.size()-8,coop.size()).equals(
+        if (!coop.subList(coop.size()-12,coop.size()).equals(
                 Arrays.asList("--hosted", "--coop", "--level", "strike_at_karkand",
+                        "--mode", "gpm_coop", "--size", "16",
                         "--team1-bots", "8", "--team2-bots", "8"))) throw new AssertionError(coop);
         int cases = 0;
         for (int first = 0; first <= GameLaunchPlan.MAX_COOP_BOTS; first++) {
@@ -34,6 +35,33 @@ public final class LaunchPlanTest {
                 "Player", "turnip", "127.0.0.1", 16567));
         if (lan.contains("--hosted") || lan.contains("--coop") || !lan.contains("127.0.0.1:16567"))
             throw new AssertionError(lan);
+        for (int size : new int[]{16,32,64}) {
+            for (String mode : new String[]{"gpm_coop", "sp1", "gpm_cq"}) {
+                List<String> layout = Arrays.asList(GameLaunchPlan.forCoop("/game/mods/bf2", "/native", 1920, 1080,
+                        "Player", "system", "strike_at_karkand", mode, size, 0, 0));
+                if (!layout.get(layout.indexOf("--mode")+1).equals(mode)
+                        || !layout.get(layout.indexOf("--size")+1).equals(Integer.toString(size)))
+                    throw new AssertionError(layout);
+            }
+            List<String> hosted = Arrays.asList(GameLaunchPlan.forHost("/game/mods/bf2", "/native", 1920, 1080,
+                    "Player", "system", "strike_at_karkand", false, size));
+            if (hosted.contains("--coop") || !hosted.get(hosted.indexOf("--size")+1).equals(Integer.toString(size)))
+                throw new AssertionError(hosted);
+        }
+        for (String mode : new String[]{"gpm_cq", "other", "../gpm_coop"}) {
+            try {
+                GameLaunchPlan.forCoop("/game/mods/bf2", "/native", 1920, 1080,
+                        "Player", "system", "strike_at_karkand", mode, 64, 1, 0);
+                throw new AssertionError("Accepted bots for " + mode);
+            } catch (IllegalArgumentException expected) { }
+        }
+        for (int size : new int[]{0,1,17,63,128,-1,Integer.MAX_VALUE}) {
+            try {
+                GameLaunchPlan.forHost("/game/mods/bf2", "/native", 1920, 1080,
+                        "Player", "system", "strike_at_karkand", false, size);
+                throw new AssertionError("Accepted layout " + size);
+            } catch (IllegalArgumentException expected) { }
+        }
         for (String dir : roots) {
             File levels = GameContent.child(new File(dir), "Levels");
             for (String name : new String[]{"strike_at_karkand", "dalian_plant"}) {

@@ -32,7 +32,11 @@ public final class LauncherActivity extends Activity {
     private final int[] bots = {8, 8};
     private EditText player, endpoint, gameKey;
     private CheckBox turnip, touch;
-    private Button deploy, mapPicker, finishMatch;
+    private Button deploy, mapPicker, sizePicker, finishMatch;
+    private final Button[] rosterButtons = new Button[4];
+    private GameContent.Layout layout;
+    private List<GameContent.Layout> sizeChoices = Collections.emptyList();
+    private MapBriefing displayed;
     private ImageView preview;
     private LinearLayout pages;
     private SharedPreferences prefs;
@@ -44,6 +48,9 @@ public final class LauncherActivity extends Activity {
     private boolean openingGame, live;
     private final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable sessionCheck = this::updateSession;
+    private final SharedPreferences.OnSharedPreferenceChangeListener packChanged = (store, key) -> {
+        if ("mapPack".equals(key)) refreshMaps();
+    };
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -99,6 +106,7 @@ public final class LauncherActivity extends Activity {
         makeSetup(page("Game setup"));
         setContentView(PadMenuFrame.wrap(shell));
         showPage(state == null ? 0 : bounded(state.getInt("tab"), TABS.length - 1));
+        prefs.registerOnSharedPreferenceChangeListener(packChanged);
         refreshMaps();
     }
 
@@ -198,7 +206,15 @@ public final class LauncherActivity extends Activity {
         mapTitle = text(caption, "Select a map", compact() ? 19 : 24, PAPER, true);
         art.setOnClickListener(v -> chooseCoopMap());
         space(map, 5);
-        mapPicker = button(map, "Select map", this::chooseCoopMap, false);
+        LinearLayout choices = new LinearLayout(this);
+        map.addView(choices, -1, -2);
+        mapPicker = button(choices, "Select map", this::chooseCoopMap, false);
+        LinearLayout.LayoutParams first = new LinearLayout.LayoutParams(0, dp(44), 1);
+        first.rightMargin = dp(4);
+        choices.setPadding(0, 0, 0, dp(4));
+        mapPicker.setLayoutParams(first);
+        sizePicker = button(choices, "Map size", this::chooseSize, false);
+        sizePicker.setLayoutParams(new LinearLayout.LayoutParams(0, dp(44), 1));
         button(map, "Battlefield 2 main menu", () -> launch(Mode.MENU), false);
 
         text(roster, "BOT ROSTER", 14, GOLD, true).setLetterSpacing(.10f);
@@ -218,6 +234,8 @@ public final class LauncherActivity extends Activity {
             number[i].setLayoutParams(new LinearLayout.LayoutParams(dp(31), -2));
             Button plus = button(line, "+", () -> adjust(team, 1), false);
             plus.setLayoutParams(new LinearLayout.LayoutParams(dp(compact() ? 34 : 42), dp(44)));
+            rosterButtons[team * 2] = minus;
+            rosterButtons[team * 2 + 1] = plus;
             plus.setContentDescription("Increase team " + (i+1) + " bots");
         }
         matchSize = text(roster, "", 13, MUTED, false);
@@ -239,8 +257,12 @@ public final class LauncherActivity extends Activity {
         updateRoster();
     }
     private void updateRoster() {
-        for (int i = 0; i < 2; i++) number[i].setText(String.valueOf(bots[i]));
-        matchSize.setText((bots[0] + bots[1]) + " bots  ·  1 human");
+        boolean allowBots = layout != null && layout.botsSupported;
+        for (Button control : rosterButtons) control.setEnabled(allowBots);
+        for (int i = 0; i < 2; i++) number[i].setText(String.valueOf(allowBots ? bots[i] : 0));
+        matchSize.setText(allowBots ? (bots[0] + bots[1]) + " bots  ·  1 human"
+                : layout == null ? "Select an installed map"
+                : "Solo exploration  ·  This layout has no installed bot support.");
     }
     private void makeControls(LinearLayout box) {
         button(box, "Controller bindings", () -> startActivity(new Intent(this, ControllerBindingsActivity.class)), true);
@@ -262,6 +284,7 @@ public final class LauncherActivity extends Activity {
         player = field(box, "Player name", prefs.getString("player", "Player"));
         turnip = check(box, "Use bundled Turnip driver", "turnip");
         button(box, "Import Battlefield 2 installation", () -> picker.pick(), false);
+        button(box, "Import bot map pack", () -> picker.pickMapPack(), false);
         button(box, "Export game logs", () -> BF2LogExporter.request(this), false);
     }
     private EditText field(LinearLayout box, String label, String value) {
@@ -278,13 +301,14 @@ public final class LauncherActivity extends Activity {
         box.addView(c); return c;
     }
     private void refreshMaps() {
+        if (isFinishing() || isDestroyed()) return;
         final int request = ++scanRequest;
         io.execute(() -> {
-            List<MapBriefing> found = new ArrayList<>();
-            File[] dirs = GameContent.child(mod, "Levels").listFiles();
-            if (dirs != null) for (File entry : dirs) {
-                if (entry.isDirectory() && GameContent.hasCoop(entry)) found.add(new MapBriefing(entry));
-            }
+            Map<String, MapBriefing> maps = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            scanMaps(mod, maps, false);
+            File pack = GameContent.mapPackDirectory(mod, prefs.getString("mapPack", ""));
+            if (pack != null) scanMaps(pack, maps, true);
+            List<MapBriefing> found = new ArrayList<>(maps.values());
             found.sort(Comparator.comparing(map -> map.title, String.CASE_INSENSITIVE_ORDER));
             boolean ready = GameContent.child(mod, "ClientArchives.con").isFile();
             runOnUiThread(() -> {
@@ -300,18 +324,54 @@ public final class LauncherActivity extends Activity {
             });
         });
     }
+    private static void scanMaps(File source, Map<String, MapBriefing> maps, boolean pack) {
+        File[] entries = GameContent.child(source, "Levels").listFiles();
+        if (entries == null) return;
+        for (File entry : entries) {
+            if (!entry.isDirectory()) continue;
+            MapBriefing map = new MapBriefing(entry);
+            if (map.layouts.isEmpty()) continue;
+            if (pack) {
+                if (map.layouts.stream().noneMatch(item -> item.botsSupported)) continue;
+                MapBriefing original = maps.get(map.id);
+                if (original != null) { original.mapPack = map; continue; }
+            }
+            maps.put(map.id, map);
+        }
+    }
     private void selectMap(MapBriefing map) {
         selected = map;
-        int request = ++artRequest;
-        preview.setImageDrawable(null);
-        mapTitle.setText(map == null ? "No co-op maps" : map.title);
-        for (int i = 0; i < 2; i++) side[i].setText(map == null ? "Team " + (i+1) : map.sides[i]);
         mapPicker.setText(map == null ? "Import game files" : "Select map");
+        sizeChoices = map == null ? Collections.emptyList() : map.deploymentLayouts();
+        if (map != null && !mod.equals(map.modDirectory)) {
+            sizeChoices = new ArrayList<>(sizeChoices);
+            sizeChoices.removeIf(item -> !item.botsSupported);
+        }
+        layout = null;
+        if (map != null) {
+            String preferred = prefs.getString("layout." + map.id, "");
+            for (GameContent.Layout candidate : sizeChoices) {
+                if (layoutKey(candidate).equals(preferred)) { layout = candidate; break; }
+                if (layout == null || candidate.botsSupported && !layout.botsSupported) layout = candidate;
+            }
+            prefs.edit().putString("map", map.id).apply();
+        }
+        showSize();
+    }
+    private void showBriefing(MapBriefing map) {
+        int request = ++artRequest;
+        displayed = map;
+        preview.setImageDrawable(null);
+        mapTitle.setText(map == null ? "No offline maps" : map.title);
+        for (int i = 0; i < 2; i++) side[i].setText(map == null ? "Team " + (i+1) : map.sides[i]);
         if (map == null) return;
-        prefs.edit().putString("map", map.id).apply();
         io.execute(() -> {
             Bitmap image = null;
-            try { image = LoadingBitmap.read(LoadingArt.find(mod, map.id)); }
+            try {
+                File art = LoadingArt.find(map.modDirectory, map.id);
+                if (art == null && !mod.equals(map.modDirectory)) art = LoadingArt.find(mod, map.id);
+                image = LoadingBitmap.read(art);
+            }
             catch (IOException | RuntimeException ex) { android.util.Log.w("OpenBF2", "Map preview unavailable", ex); }
             final Bitmap bitmap = image;
             runOnUiThread(() -> {
@@ -320,11 +380,40 @@ public final class LauncherActivity extends Activity {
             });
         });
     }
+    private String layoutKey(GameContent.Layout item) {
+        String source = mod.equals(selected.sourceOf(item).modDirectory) ? "" : "pack/";
+        return source + item.mode + "/" + item.size;
+    }
+    private void showSize() {
+        sizePicker.setText(layout == null ? "Map size" : "Map size · " + layout.size);
+        sizePicker.setEnabled(layout != null);
+        MapBriefing source = layout == null ? null : selected.sourceOf(layout);
+        if (source == null || displayed != source) showBriefing(source);
+        updateRoster();
+    }
+    private String sizeLabel(GameContent.Layout item) {
+        String kind = item.botsSupported ? "Bots supported" : "Solo exploration";
+        if (!mod.equals(selected.sourceOf(item).modDirectory)) kind += " (map pack)";
+        return item.size + "-player layout  ·  " + kind;
+    }
+    private void chooseSize() {
+        if (selected == null) return;
+        List<GameContent.Layout> choices = sizeChoices;
+        String[] labels = new String[choices.size()];
+        for (int i = 0; i < labels.length; i++) labels[i] = sizeLabel(choices.get(i));
+        PadMenuFrame.show(new AlertDialog.Builder(this).setTitle(selected.title + " · Map size")
+                .setSingleChoiceItems(labels, choices.indexOf(layout), (dialog, i) -> {
+                    layout = choices.get(i);
+                    prefs.edit().putString("layout." + selected.id, layoutKey(layout)).apply();
+                    showSize();
+                    dialog.dismiss();
+                }).setNegativeButton("Cancel", null).create());
+    }
     private void chooseCoopMap() {
         if (levels.isEmpty()) { picker.pick(); return; }
         String[] choices = new String[levels.size()];
         for (int i = 0; i < choices.length; i++) choices[i] = levels.get(i).title;
-        PadMenuFrame.show(new AlertDialog.Builder(this).setTitle("Select co-op map")
+        PadMenuFrame.show(new AlertDialog.Builder(this).setTitle("Select map")
             .setSingleChoiceItems(choices, levels.indexOf(selected), (dialog, i) -> {
                 selectMap(levels.get(i)); dialog.dismiss();
             }).setNegativeButton("Cancel", null).create());
@@ -366,19 +455,38 @@ public final class LauncherActivity extends Activity {
                 }).create());
     }
     private void chooseHostMap() {
-        File[] entries = GameContent.child(mod, "Levels").listFiles();
-        List<String> choices = new ArrayList<>();
-        if (entries != null) for (File level : entries)
-            if (level.isDirectory() && GameContent.hasLayout(level, "gpm_cq")) choices.add(level.getName());
-        if (choices.isEmpty()) { status.setText("Import a map with a 16-player Conquest layout."); return; }
-        Collections.sort(choices, String.CASE_INSENSITIVE_ORDER);
-        String[] items = choices.toArray(new String[0]);
-        PadMenuFrame.show(new AlertDialog.Builder(this).setTitle("Host LAN Conquest").setItems(items,
-                (dialog, i) -> launch(Mode.HOST, items[i])).create());
+        io.execute(() -> {
+            Map<String, List<GameContent.Layout>> choices = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            File[] entries = GameContent.child(mod, "Levels").listFiles();
+            if (entries != null) for (File level : entries) {
+                if (!level.isDirectory()) continue;
+                List<GameContent.Layout> sizes = GameContent.layouts(level, "gpm_cq");
+                if (!sizes.isEmpty()) choices.put(level.getName(), sizes);
+            }
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (choices.isEmpty()) {
+                    status.setText("Import a map with a Conquest layout."); return;
+                }
+                String[] names = choices.keySet().toArray(new String[0]);
+                PadMenuFrame.show(new AlertDialog.Builder(this).setTitle("Host LAN Conquest")
+                        .setItems(names, (dialog, i) -> chooseHostSize(names[i], choices.get(names[i])))
+                        .create());
+            });
+        });
     }
-    private void launch(Mode mode) { launch(mode, null); }
-    private void launch(Mode mode, String hostMap) {
+    private void chooseHostSize(String map, List<GameContent.Layout> sizes) {
+        if (sizes.size() == 1) { launch(Mode.HOST, map, sizes.get(0).size); return; }
+        String[] labels = new String[sizes.size()];
+        for (int i = 0; i < labels.length; i++) labels[i] = sizes.get(i).size + "-player layout";
+        PadMenuFrame.show(new AlertDialog.Builder(this).setTitle("LAN map size")
+                .setItems(labels, (dialog, i) -> launch(Mode.HOST, map, sizes.get(i).size))
+                .setNegativeButton("Cancel", null).create());
+    }
+    private void launch(Mode mode) { launch(mode, null, 0); }
+    private void launch(Mode mode, String hostMap, int hostSize) {
         if (openingGame) return;
+        if (picker.isImporting()) { status.setText("Game data is still importing."); return; }
         try {
             if (GameSession.isActive(this)) {
                 if (mode != Mode.COOP) {
@@ -393,7 +501,6 @@ public final class LauncherActivity extends Activity {
                 return;
             }
         } catch (IOException e) { status.setText("Unable to check game session: " + e.getMessage()); return; }
-        if (picker.isImporting()) { status.setText("The game data import is still running."); return; }
         if (!GameContent.child(mod, "ClientArchives.con").isFile()) { picker.pick(); return; }
         if (getSharedPreferences("import", MODE_PRIVATE).getBoolean("incomplete", false)) {
             status.setText("The previous import was interrupted. Select the installation folder again to finish."); return;
@@ -418,16 +525,28 @@ public final class LauncherActivity extends Activity {
                 throw new IOException("Enter your Battlefield 2 product key before joining a LAN server.");
             switch (mode) {
                 case COOP:
-                    if (map == null) throw new IOException("Import a map with a 16-player co-op layout.");
-                    if (!new File(libs, "libaidll.so").isFile())
+                    if (map == null || layout == null) throw new IOException("Import an offline map and choose its size.");
+                    if (layout.botsSupported && !new File(libs, "libaidll.so").isFile())
                         throw new IOException("This build lacks the ARM64 bot runtime. The game menu and LAN client are available.");
                     if (!GameContent.child(mod, "ServerArchives.con").isFile())
                         throw new IOException("ServerArchives.con is missing. Import the complete installation.");
-                    args = GameLaunchPlan.forCoop(mod.getPath(), libs.getPath(), width, height, name, driver, map, bots[0], bots[1]);
-                    OfflineCareer.prepare(this, mod);
+                    args = GameLaunchPlan.forCoop(mod.getPath(), libs.getPath(), width, height, name, driver, map,
+                            layout.mode, layout.size, layout.botsSupported ? bots[0] : 0,
+                            layout.botsSupported ? bots[1] : 0);
+                    File source = selected.sourceOf(layout).modDirectory;
+                    if (!source.equals(mod)) {
+                        File installed = GameContent.mapPackDirectory(mod, prefs.getString("mapPack", ""));
+                        if (!source.equals(installed) || !source.isDirectory())
+                            throw new IOException("The selected map pack changed. Select the map again.");
+                        args = Arrays.copyOf(args, args.length + 2);
+                        args[args.length - 2] = "--map-pack";
+                        args[args.length - 1] = source.getName();
+                    }
+                    if (layout.botsSupported) OfflineCareer.prepare(this, mod);
+                    else OfflineCareer.disarm(this);
                     break;
                 case HOST:
-                    args = GameLaunchPlan.forHost(mod.getPath(), libs.getPath(), width, height, name, driver, hostMap, false);
+                    args = GameLaunchPlan.forHost(mod.getPath(), libs.getPath(), width, height, name, driver, hostMap, false, hostSize);
                     break;
                 case LAN:
                     int split = host.lastIndexOf(':');
@@ -465,6 +584,7 @@ public final class LauncherActivity extends Activity {
         ++artRequest;
         ++scanRequest;
         handler.removeCallbacks(sessionCheck);
+        prefs.unregisterOnSharedPreferenceChangeListener(packChanged);
         io.shutdownNow();
         super.onDestroy();
     }
@@ -472,6 +592,7 @@ public final class LauncherActivity extends Activity {
         super.onActivityResult(request, result, data);
         if (BF2LogExporter.handleResult(this, request, result, data)) return;
         if (request == GameDirectoryPicker.REQUEST_CODE) picker.onResult(result, data);
+        else if (request == GameDirectoryPicker.REQUEST_MAP_PACK) picker.onMapPackResult(result, data);
         else if (request == BROWSE && result == RESULT_OK && data != null)
             endpoint.setText(data.getStringExtra("ip") + ":" + data.getIntExtra("gamePort", 16567));
     }

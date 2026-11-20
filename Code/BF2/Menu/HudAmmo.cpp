@@ -280,6 +280,37 @@ void HudAmmo::updateCrosshair(world::IObject* object)
     if (local) m_field0fc = local->getCrossHairFadeValue();
     m_field0eb = m_field0fc != 0.0f; // fucom parity: unordered is also shown.
 }
+
+void HudAmmo::updateInfantryCrosshair(world::IObject* soldier, world::IObject* kit)
+{
+    updateCrosshair(kit);
+#if defined(__ANDROID__)
+    // [CHOSEN, not recovered] Thor ADS visibility: sample the current primary weapon,
+    // not the aim button or the cached ammo-display zoom flag (stale on early returns).
+    world::IPlayerControlObject* const control = findControlParent(soldier);
+    world::IObject* const active = control ? control->getActiveWeapon(0) : nullptr;
+    world::IWeaponObject* const weapon = active
+        ? static_cast<world::IWeaponObject*>(active->queryInterface(world::IID_IWeaponObject))
+        : nullptr;
+    // Stock rifle arms are selected by GuiIndex (5/4), with authored zoom GUIs
+    // (52/53) retaining hit markers and, for the M4, its optic dot. The pending
+    // DefaultZoomComp HUD-event frontier leaves this selection stale. Refresh the
+    // existing typed selection when it differs; do not cancel timed weapon feedback.
+    if (active && !(active->getFlags() & world::IObject::OFIsDisabled)
+        && active->m_weaponHudComponent && hudManager) {
+        HudVehicleInformation* const info = hudManager->getVehicleInformation();
+        if (info && info->m_crossHairMode == 0 && !(info->m_field0b4 > 0.0f)) {
+            world::IWeaponHudComp* const weaponHud =
+                static_cast<world::IWeaponHudComp*>(active->m_weaponHudComponent);
+            if (weaponHud->getGuiIndex(info->m_field244 || !info->m_field2ac)
+                != info->getGuiIndex())
+                info->updateGuiIndex();
+        }
+    }
+    if (m_field0e8 && weapon && weapon->getZoom() != 0)
+        m_field0e8 = false;
+#endif
+}
 // Republishes HUD mode when the tracked values differ, including unordered floating-point values.
 void HudAmmo::syncHudMode()
 {
@@ -931,7 +962,7 @@ void HudAmmo::update(float delta)
         world::IObject* defaultVehicle = local->getDefaultVehicle();
         if (local->getVehicle() == defaultVehicle) {
             auto* soldier = static_cast<world::ISoldier*>(local->getDefaultVehicle()->queryInterface(world::IID_ISoldier));
-            if (soldier) updateCrosshair(soldier->getKit());
+            if (soldier) updateInfantryCrosshair(defaultVehicle, soldier->getKit());
             m_field1c2 = false;
         } else {
             updateCrosshair(local->getVehicle());

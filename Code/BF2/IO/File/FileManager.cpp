@@ -5,6 +5,7 @@
 #include "FileManager.h"
 
 #include "ZipArchive.h"             // the concrete archive - mountArchive/unmountArchive cast to it
+#include "OfflineMapPack.h"
 
 #include "../../Core/Debug.h"
 #include "../../Core/StringUtil.h"
@@ -243,7 +244,10 @@ bool FileManager::removeMergeDirectory(const std::string& path)
 // Queries the current directory before advancing loading progress.
 std::string FileManager::fileExistsEx2(const std::string& name)
 {
-    std::string path = name;
+    std::string packFile, packLogical;
+    const bool packLevel = offline_maps::resolve(name, packFile, &packLogical);
+    if (!packFile.empty()) return m_fileSystem->fileExists(packFile) ? packFile : getEmptyString();
+    std::string path = packLevel ? packLogical : name;
     removeBf2ContentPart(path);
     if (path.empty())
         return getEmptyString();
@@ -265,6 +269,7 @@ std::string FileManager::fileExistsEx2(const std::string& name)
             if ((*it)->fileExists(stripped))
                 return stripped;
     }
+    if (packLevel) return getEmptyString();
     for (std::list<std::string>::const_iterator it = m_pathList.begin();
          it != m_pathList.end(); ++it)
     {
@@ -396,8 +401,10 @@ IArchive* FileManager::mountArchive(const std::string& archiveName,
 
     // 4. try each search path in turn until one yields an archive
     const std::string lower = getLowerCase(archiveName);
-    IArchive* arc = 0;
-    for (std::list<std::string>::const_iterator it = m_pathList.begin();
+    std::string packFile;
+    const bool packLevel = offline_maps::resolve(archiveName, packFile);
+    IArchive* arc = packLevel && !packFile.empty() ? openArchive(resolved, 0, true) : 0;
+    for (std::list<std::string>::const_iterator it = m_pathList.begin(); !packLevel &&
          it != m_pathList.end(); ++it)
     {
         arc = openArchive(*it + lower, 0, true);
@@ -429,6 +436,8 @@ IStream* FileManager::open(const std::string& name, IFileSystem::FileMode mode,
     // Write: straight through
     if (mode != IFileSystem::FILEMODE_READ || access == 2 || access == 1)
     {
+        std::string packFile;
+        if (offline_maps::resolve(name, packFile)) return 0;
         std::string wp;
         getWritePath(name, wp);
         loadStat->incLoadCounter(1);
@@ -437,11 +446,19 @@ IStream* FileManager::open(const std::string& name, IFileSystem::FileMode mode,
 
     // Read: layered
     m_isLastFileOpenedFromArchive = false;
+    std::string packFile, packLogical;
+    const bool packLevel = offline_maps::resolve(name, packFile, &packLogical);
+    if (!packFile.empty())
+    {
+        IStream* stream = m_fileSystem->open(packFile, mode, access, a6);
+        if (stream) { loadStat->setCurrentFile(name); loadStat->incLoadCounter(1); }
+        return stream;
+    }
 
     std::string path;
     // expandPath takes its path by non-const reference; the temporaries the previous spelling bound
     // to it are an MSVC extension. Named here, with the same lifetime and the same discarded result.
-    std::string strippedName = stripModPath(name);
+    std::string strippedName = stripModPath(packLevel ? packLogical : name);
     const std::string emptyBase;
     expandPath(/*path*/ strippedName, /*base*/ emptyBase, &path, m_fileSystem);
     goUpInPath(path);
@@ -467,6 +484,8 @@ IStream* FileManager::open(const std::string& name, IFileSystem::FileMode mode,
             }
         }
     }
+
+    if (packLevel) return 0;
 
     // Resolve mode 1 permits loose-file fallback only for names containing @home@, @root@ or png.
     // [UNRESOLVED] The enumerator name for this mode.
@@ -501,7 +520,10 @@ IStream* FileManager::open(const std::string& name, IFileSystem::FileMode mode,
 // Returns the resolved file path, or an empty string if absent. skipArchives restricts lookup to loose files.
 std::string FileManager::fileExistsEx(const std::string& name, bool skipArchives)
 {
-    std::string path = name;
+    std::string packFile, packLogical;
+    const bool packLevel = offline_maps::resolve(name, packFile, &packLogical);
+    if (!packFile.empty()) return m_fileSystem->fileExists(packFile) ? packFile : getEmptyString();
+    std::string path = packLevel ? packLogical : name;
     removeBf2ContentPart(path);
 
     if (path.empty())
@@ -527,6 +549,8 @@ std::string FileManager::fileExistsEx(const std::string& name, bool skipArchives
             }
         }
     }
+
+    if (packLevel) return getEmptyString();
 
     // 2. loose files along the path list. note goUpInPath is applied to the expanded path here,
     //    which open() does not do - open expands then opens directly.
@@ -557,7 +581,10 @@ bool FileManager::fileExists(const std::string& name)
 bool FileManager::readFile(const std::string& name, void* buffer, unsigned int size,
                            unsigned int& bytesRead)
 {
-    std::string path = name;
+    std::string packFile, packLogical;
+    const bool packLevel = offline_maps::resolve(name, packFile, &packLogical);
+    if (!packFile.empty()) return m_fileSystem->readFile(packFile, buffer, size, bytesRead);
+    std::string path = packLevel ? packLogical : name;
     fixPathDelimiters(path, '/');
 
     std::string expanded;
@@ -580,6 +607,8 @@ bool FileManager::readFile(const std::string& name, void* buffer, unsigned int s
             }
         }
     }
+
+    if (packLevel) return false;
 
     // 2. loose files - note the plain concatenation, no expandPath
     for (std::list<std::string>::const_iterator it = m_pathList.begin();
@@ -715,6 +744,17 @@ bool FileManager::unmountArchive(const std::string& name)
         return true;                                     // unconditional
     }
 
+    // The selected pack archive has a different physical prefix than the base write path.
+    std::string packFile;
+    if (offline_maps::resolve(name, packFile) && !packFile.empty())
+    {
+        for (ArchiveMap::iterator it = m_archives.begin(); it != m_archives.end(); ++it)
+            for (std::vector<IArchive*>::iterator a = it->second.begin(); a != it->second.end(); ++a)
+                if (equalsIgnoreCase(static_cast<ZipArchive*>(*a)->getFilename(), packFile))
+                { destroyArchive(*a); it->second.erase(a); return true; }
+        return false;
+    }
+
     // Exact
     for (std::list<std::string>::const_iterator p = m_pathList.begin();
          p != m_pathList.end(); ++p)
@@ -790,6 +830,8 @@ bool FileManager::getFullFileName(std::string& /*path*/)
 // Resolves paths through the write path and delegates to the base filesystem. Archives are not modified.
 bool FileManager::deleteFile(const std::string& name)
 {
+    std::string packFile;
+    if (offline_maps::resolve(name, packFile)) return false;
     std::string wp;
     getWritePath(name, wp);
     return m_fileSystem->deleteFile(wp);
@@ -797,6 +839,8 @@ bool FileManager::deleteFile(const std::string& name)
 
 bool FileManager::moveFile(const std::string& from, const std::string& to)
 {
+    std::string packFile;
+    if (offline_maps::resolve(from, packFile) || offline_maps::resolve(to, packFile)) return false;
     std::string wpFrom, wpTo;
     getWritePath(from, wpFrom);
     getWritePath(to,   wpTo);
@@ -805,6 +849,8 @@ bool FileManager::moveFile(const std::string& from, const std::string& to)
 
 bool FileManager::copyFile(const std::string& from, const std::string& to, bool overwrite)
 {
+    std::string packFile;
+    if (offline_maps::resolve(from, packFile) || offline_maps::resolve(to, packFile)) return false;
     std::string wpFrom, wpTo;
     getWritePath(from, wpFrom);
     getWritePath(to,   wpTo);
@@ -814,6 +860,8 @@ bool FileManager::copyFile(const std::string& from, const std::string& to, bool 
 bool FileManager::writeFile(const std::string& name, const void* buffer, unsigned int size,
                             bool append)
 {
+    std::string packFile;
+    if (offline_maps::resolve(name, packFile)) return false;
     std::string wp;
     getWritePath(name, wp);
     loadStat->incLoadCounter(1);
@@ -823,8 +871,11 @@ bool FileManager::writeFile(const std::string& name, const void* buffer, unsigne
 // Fills out by searching mounted archives before loose files. Returns whether a file was found.
 bool FileManager::getFileInfo(const std::string& name, FileInfo& out)
 {
+    std::string packFile, packLogical;
+    const bool packLevel = offline_maps::resolve(name, packFile, &packLogical);
+    if (!packFile.empty()) return m_fileSystem->getFileInfo(packFile, out);
     // Archive lookup and the returned record use the mod-stripped name; loose files use the original path.
-    const std::string stripped = stripModPath(name);
+    const std::string stripped = stripModPath(packLevel ? packLogical : name);
 
     std::string dir = getFixPath(extractFilePath(stripped, '/'), '/');
     goUpInPath(dir);
@@ -846,6 +897,8 @@ bool FileManager::getFileInfo(const std::string& name, FileInfo& out)
         }
     }
 
+    if (packLevel) return false;
+
     // 2. loose files
     for (std::list<std::string>::const_iterator it = m_pathList.begin();
          it != m_pathList.end(); ++it)
@@ -866,10 +919,19 @@ IStream* FileManager::openwin32(const std::string& name, IFileSystem::FileMode m
 {
     if (mode != IFileSystem::FILEMODE_READ || access == 2 || access == 1)
     {
+        std::string packFile;
+        if (offline_maps::resolve(name, packFile)) return 0;
         std::string wp;
         getWritePath(name, wp);
         loadStat->incLoadCounter(1);
         return m_fileSystem->open(wp, mode, access, a6);
+    }
+
+    std::string packFile;
+    if (offline_maps::resolve(name, packFile))
+    {
+        m_isLastFileOpenedFromArchive = false;
+        return packFile.empty() ? 0 : m_fileSystem->open(packFile, mode, access, a6);
     }
 
     for (std::list<std::string>::const_iterator it = m_pathList.begin();
@@ -900,8 +962,11 @@ int FileManager::findFiles(const std::string& pattern, bool recursive,
         return 0;
 
     out.clear();
+    std::string packFile, packLogical;
+    const bool packLevel = offline_maps::resolve(pattern, packFile, &packLogical);
+    if (!packFile.empty()) return m_fileSystem->findFiles(packFile, recursive, out);
 
-    std::string path = pattern;
+    std::string path = packLevel ? packLogical : pattern;
     fixPath(path, '/');
     loadStat->incExistsCounter();
 
@@ -910,7 +975,7 @@ int FileManager::findFiles(const std::string& pattern, bool recursive,
     // in FileManager.h. Each entry aliases one mount point's vector inside m_archives, so the loop
     // below is nested: outer over mount points, inner over that mount point's archives.
     std::vector<std::vector<IArchive*>*> matching;
-    findAllMatchingArchives(pattern, matching);
+    findAllMatchingArchives(packLevel ? packLogical : pattern, matching);
 
     // Case-insensitive de-duplication set, 3011 buckets, discarded at the end.
     Hash<std::string, bool, StringHashNoCaseHashFunc> seen(3011);
@@ -937,7 +1002,7 @@ int FileManager::findFiles(const std::string& pattern, bool recursive,
     }
 
     // 2. loose files - only if nothing was found and no archive matched
-    if (out.empty() && matching.empty())
+    if (!packLevel && out.empty() && matching.empty())
     {
         for (std::list<std::string>::const_iterator it = m_pathList.begin();
              it != m_pathList.end(); ++it)

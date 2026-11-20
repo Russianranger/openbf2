@@ -15,7 +15,7 @@ import java.io.IOException;
 public final class GameLoadingView extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final android.os.Handler ui = new android.os.Handler(android.os.Looper.getMainLooper());
-    private File mod;
+    private File mod, pack;
     private String map = "";
     private Bitmap artwork;
     private boolean direct = true;
@@ -32,10 +32,13 @@ public final class GameLoadingView extends View {
     public GameLoadingView(Context context, String[] args) {
         super(context);
         for (String argument : args) if ("--menu".equals(argument)) direct = false;
+        String packName = null;
         for (int i = 0; i+1 < args.length; i++) {
             if ("--mod".equals(args[i])) mod = new File(args[++i]);
+            else if ("--map-pack".equals(args[i])) packName = args[++i];
             else if ("--level".equals(args[i])) map = LoadingArt.levelName(args[++i]);
         }
+        pack = GameContent.mapPackDirectory(mod, packName);
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         loadArtwork();
     }
@@ -67,14 +70,15 @@ public final class GameLoadingView extends View {
     private void loadArtwork() {
         if (!direct || closed) return;
         final int request = ++generation;
-        final File folder = mod;
+        final File folder = mod, additional = pack;
         final String level = map;
         if (artwork != null) { artwork.recycle(); artwork = null; }
         if (folder == null || level.isEmpty()) return;
         new Thread(() -> {
             Bitmap decoded = null;
             try {
-                decoded = LoadingBitmap.read(LoadingArt.find(folder, level));
+                File file = additional == null ? null : LoadingArt.find(additional, level);
+                decoded = LoadingBitmap.read(file != null ? file : LoadingArt.find(folder, level));
             } catch (IOException | RuntimeException failure) {
                 android.util.Log.w("BF2Loading", "Loading artwork unavailable: " + failure.getMessage());
             }

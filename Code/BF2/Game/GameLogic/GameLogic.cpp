@@ -39,6 +39,7 @@
 #include "../../AI/AIDLL/AI/Main/CommonSingletonServer.h"
 #include "../../AI/AIDLL/AI/Main/AISettingsInterfaces.h"
 #include "../GameServer/OfflineCoopBots.h"
+#include "../GameServer/HostMapLayout.h"
 #include "../../IO/Input/PlayerInput.h"   // getIsSprintRequested takes one BY value
 #include "../../Scene/Object/ObjectTypes/Game/IPlayerControlObject.h"   // the weapon slots
 #include "../Objects/IObject.h"                       // handleMessage / getTemplate / getParent
@@ -527,6 +528,15 @@ bool GameLogic::load(const std::string& levelPath)
             found.push_back(sizes[i]);
     }
     int chosenSize = maxPlayers;                               // v212's initial value
+    const int selectedLayout = host_layout::selectedSize(levelName.c_str(), gameMode.c_str());
+    // [CHOSEN, not recovered] A launcher choice may not silently become another
+    // layout if files were removed or changed since discovery.
+    if (selectedLayout && std::find(found.begin(), found.end(), selectedLayout) == found.end())
+    {
+        std::fprintf(stderr, "[host-layout] Missing exact %s/%d gameplay for %s; refusing fallback\n",
+                     gameMode.c_str(), selectedLayout, levelName.c_str());
+        return false;
+    }
     if (found.empty())
     {
         // Severity 6 - fatal through the debug callback on this build, exactly as a level with no
@@ -550,7 +560,15 @@ bool GameLogic::load(const std::string& levelPath)
             }
         }
     }
+    if (selectedLayout && chosenSize != selectedLayout)
+    {
+        std::fprintf(stderr, "[host-layout] Requested %d but engine selected %d; refusing mismatch\n",
+                     selectedLayout, chosenSize);
+        return false;
+    }
     game->setCurrentMapSize(chosenSize);                       // +0x104
+    if (selectedLayout)
+        std::fprintf(stderr, "[host-layout] Loaded exact %s/%d for %s\n", gameMode.c_str(), chosenSize, levelName.c_str());
     settings->stringSet(std::string("GLGameLevelPath"), levelPath);
 
     // stats, sun, and the first scripted phase (0x80CEC4A-0x80CEE12)
@@ -569,7 +587,7 @@ bool GameLogic::load(const std::string& levelPath)
         // [CHOSEN, not recovered] Explicit launcher rosters take precedence even
         // when imported AIDefault.ai overrides the retail menu's population.
         offline_coop::BotCounts offline;
-        const bool exactOfflineBots = isServer() && game->getCurrentMapGameMode() == "gpm_coop" &&
+        const bool exactOfflineBots = isServer() && offline_coop::isBotMode(game->getCurrentMapGameMode().c_str()) &&
             offline_coop::readBotCounts(offline);
         ai::IAISettingsModifier* modifier = static_cast<ai::IAISettingsModifier*>(
             ai::CommonSingletonServer::m_iaiSettingsModifier);

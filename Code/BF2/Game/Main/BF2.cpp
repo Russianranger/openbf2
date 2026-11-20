@@ -4,6 +4,8 @@
 #if defined(__ANDROID__) && !DEDICATED
 #include "AndroidUiState.h"
 #include "../GameServer/OfflineCoopBots.h"
+#include "../GameServer/HostMapLayout.h"
+#include "../../IO/File/OfflineMapPack.h"
 #endif
 
 #include "BF2Engine.h"                              // [INFERRED] path: Game/Main/BF2Engine.cpp is
@@ -759,8 +761,14 @@ void installAndroidCrashReport()
 // working directory, a writable home, the log file and the engine's own command line.
 static std::string androidCommandLine(int argc, char** argv)
 {
+    // A new menu/join/base launch cannot inherit an earlier optional map overlay.
+    unsetenv("BF2_PORT_MAP_PACK");
     std::string mod, width = "1280", height = "720", name, level, server, libraryDir, driver;
+    std::string mapPack;
+    int packArguments = 0, levelArguments = 0, sizeArguments = 0;
+    bool incompletePackArgument = false;
     std::string team1Bots = "8", team2Bots = "8";
+    std::string selectedMode, layoutSize = "16";
     bool hosted = false, menu = false, coop = false;
     for (int i = 1; i < argc; ++i)
     {
@@ -768,19 +776,36 @@ static std::string androidCommandLine(int argc, char** argv)
         if (option == "--hosted") { hosted = true; continue; }
         if (option == "--coop") { coop = true; continue; }
         if (option == "--menu") { menu = true; continue; }
+        if (option == "--map-pack")
+        {
+            ++packArguments;
+            if (i + 1 >= argc) { incompletePackArgument = true; break; }
+            mapPack = argv[++i];
+            continue;
+        }
         if (i + 1 >= argc) break;
         const char* const value = argv[++i];
         if (option == "--mod") mod = value;
         else if (option == "--width") width = value;
         else if (option == "--height") height = value;
         else if (option == "--name") name = value;
-        else if (option == "--level") level = value;
+        else if (option == "--level") { level = value; ++levelArguments; }
+        else if (option == "--mode") selectedMode = value;
+        else if (option == "--size") { layoutSize = value; ++sizeArguments; }
         else if (option == "--connect") server = value;
         else if (option == "--libdir") libraryDir = value;
         else if (option == "--driver") driver = value;
         else if (option == "--team1-bots") team1Bots = value;
         else if (option == "--team2-bots") team2Bots = value;
         else if (option == "--cdkey") setenv("BF2_PORT_CDKEY", value, 1);
+    }
+    if (packArguments && (incompletePackArgument || packArguments != 1 || levelArguments != 1 ||
+        sizeArguments != 1 || menu || !hosted || !coop || !server.empty() ||
+        !dice::hfe::offline_maps::validId(mapPack) || !dice::hfe::offline_maps::validLevel(level) ||
+        mod.size() < 9 || dice::hfe::offline_maps::lower(mod.substr(mod.size() - 9)) != "/mods/bf2"))
+    {
+        std::fprintf(stderr, "OpenBF2: map packs require one valid offline base-mod map and explicit size\n");
+        return std::string();
     }
     const char* const files = SDL_GetAndroidExternalStoragePath();
     if (files)
@@ -802,7 +827,8 @@ static std::string androidCommandLine(int argc, char** argv)
         dice::hfe::offline_coop::BotCounts counts;
         if (!dice::hfe::offline_coop::parseCount(team1Bots.c_str(), counts.team1) ||
             !dice::hfe::offline_coop::parseCount(team2Bots.c_str(), counts.team2) ||
-            counts.total() > dice::hfe::offline_coop::maxBots)
+            counts.total() > dice::hfe::offline_coop::maxBots ||
+            (selectedMode == "gpm_cq" && counts.total() != 0))
         {
             std::fprintf(stderr, "OpenBF2: invalid offline bot counts (maximum total 63)\n");
             return std::string();
@@ -816,6 +842,26 @@ static std::string androidCommandLine(int argc, char** argv)
         unsetenv("BF2_PORT_LOCAL_COOP");
         unsetenv("BF2_PORT_COOP_TEAM1_BOTS");
         unsetenv("BF2_PORT_COOP_TEAM2_BOTS");
+    }
+    if (!menu && hosted)
+    {
+        if (selectedMode.empty()) selectedMode = coop ? "gpm_coop" : "gpm_cq";
+        if (!dice::hfe::host_layout::validMode(selectedMode.c_str()) ||
+            !dice::hfe::host_layout::parseSize(layoutSize.c_str()) ||
+            (!coop && selectedMode != "gpm_cq"))
+        {
+            std::fprintf(stderr, "OpenBF2: invalid hosted map mode or size\n");
+            return std::string();
+        }
+        setenv("BF2_PORT_HOST_LEVEL", level.c_str(), 1);
+        setenv("BF2_PORT_HOST_MODE", selectedMode.c_str(), 1);
+        setenv("BF2_PORT_HOST_SIZE", layoutSize.c_str(), 1);
+    }
+    else
+    {
+        unsetenv("BF2_PORT_HOST_LEVEL");
+        unsetenv("BF2_PORT_HOST_MODE");
+        unsetenv("BF2_PORT_HOST_SIZE");
     }
     setenv("DXVK_WSI_DRIVER", "SDL3", 1);
     setenv("DXVK_LOG_LEVEL", "warn", 1);
@@ -852,6 +898,20 @@ static std::string androidCommandLine(int argc, char** argv)
         return std::string();
     }
     setenv("BF2_ANDROID_GAME_ROOT", root.c_str(), 1);
+    if (packArguments)
+    {
+        dice::hfe::offline_maps::Selection selected;
+        selected.id = mapPack; selected.level = dice::hfe::offline_maps::lower(level);
+        selected.mode = selectedMode; selected.size = dice::hfe::host_layout::parseSize(layoutSize.c_str());
+        if (!dice::hfe::offline_maps::requiredFilesPresent(selected))
+        {
+            std::fprintf(stderr, "OpenBF2: selected map pack is missing its archives or descriptor; refusing base-map fallback\n");
+            return std::string();
+        }
+        setenv("BF2_PORT_MAP_PACK", mapPack.c_str(), 1);
+        std::fprintf(stderr, "OpenBF2 map pack: %s level=%s mode=%s size=%d (base mod retained)\n",
+            mapPack.c_str(), selected.level.c_str(), selectedMode.c_str(), selected.size);
+    }
     std::string line = "+modPath mods/bf2 +fullscreen 0 +restart 1 +multi 1 +szx " + width + " +szy " + height;
     if (menu)
         return line;
@@ -863,14 +923,14 @@ static std::string androidCommandLine(int argc, char** argv)
         const std::string directory(files ? files : ".");
         const std::string mapList = directory + (coop ? "/coop-maplist.con" : "/maplist.con");
         const std::string settings = directory + (coop ? "/coop-settings.con" : "/serversettings.con");
-        const char* const mode = coop ? "gpm_coop" : "gpm_cq";
+        const char* const mode = selectedMode.c_str();
         FILE* out = std::fopen(mapList.c_str(), "w");
         if (!out)
         {
             std::perror("OpenBF2 map list");
             return std::string();
         }
-        const int mapWritten = std::fprintf(out, "mapList.append %s %s 16\n", level.c_str(), mode);
+        const int mapWritten = std::fprintf(out, "mapList.append %s %s %s\n", level.c_str(), mode, layoutSize.c_str());
         if (std::fclose(out) != 0 || mapWritten < 0)
         {
             std::perror("OpenBF2 map list write");
@@ -893,7 +953,7 @@ static std::string androidCommandLine(int argc, char** argv)
                        "sv.adminScript \"bf2_offline_career\"\n", out);
             std::fprintf(out, "sv.coopBotCount %d\nsv.coopBotRatio %.9g\n",
                          counts.total(), counts.total() ? 100.0 * counts.team1 / counts.total() : 0.0);
-            line += " +ai 1";
+            line += selectedMode == "gpm_cq" ? " +ai 0" : " +ai 1";
         }
         const bool writeFailed = std::ferror(out) != 0;
         if (std::fclose(out) != 0 || writeFailed)
@@ -905,13 +965,13 @@ static std::string androidCommandLine(int argc, char** argv)
         appendCommandLineArg(line, level.c_str(), false);
         line += " +gameMode ";
         line += mode;
-        line += coop ? " +maxPlayers 1 +mapList" : " +maxPlayers 16 +mapList";
+        line += coop ? " +maxPlayers 1 +mapList" : " +maxPlayers " + layoutSize + " +mapList";
         appendCommandLineArg(line, mapList.c_str(), false);
         line += " +config";
         appendCommandLineArg(line, settings.c_str(), false);
         if (coop)
-            std::fprintf(stderr, "OpenBF2 offline co-op: map=%s mode=%s team1Bots=%s team2Bots=%s humanSlots=1 listen=127.0.0.1\n",
-                         level.c_str(), mode, team1Bots.c_str(), team2Bots.c_str());
+            std::fprintf(stderr, "OpenBF2 offline: map=%s mode=%s size=%s team1Bots=%s team2Bots=%s humanSlots=1 listen=127.0.0.1\n",
+                         level.c_str(), mode, layoutSize.c_str(), team1Bots.c_str(), team2Bots.c_str());
     }
     else
     {

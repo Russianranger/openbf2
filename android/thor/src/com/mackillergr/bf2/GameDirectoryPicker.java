@@ -24,6 +24,7 @@ import java.util.Set;
  */
 final class GameDirectoryPicker {
     static final int REQUEST_CODE = 4082;
+    static final int REQUEST_MAP_PACK = 4083;
     interface Listener {
         void onStatus(String status);
         void onImported(String path);
@@ -50,19 +51,27 @@ final class GameDirectoryPicker {
     boolean isImporting() { return IMPORTING.get(); }
 
     void pick() {
+        openPicker(REQUEST_CODE);
+    }
+
+    void pickMapPack() {
+        openPicker(REQUEST_MAP_PACK);
+    }
+
+    private void openPicker(int request) {
         try {
             if (GameSession.isActive(activity)) {
                 listener.onStatus("Close the current game before importing data."); return;
             }
         } catch (IOException e) { listener.onStatus("Unable to check game session: " + e.getMessage()); return; }
         if (IMPORTING.get()) {
-            listener.onStatus("A game data import is already in progress.");
+            listener.onStatus("An import is already in progress.");
             return;
         }
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION |
                 Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-        activity.startActivityForResult(intent, REQUEST_CODE);
+        activity.startActivityForResult(intent, request);
     }
 
     void onResult(int resultCode, Intent data) {
@@ -79,6 +88,95 @@ final class GameDirectoryPicker {
         } catch (Exception error) {
             listener.onStatus("Could not open the selected folder: " + error.getMessage());
         }
+    }
+
+    void onMapPackResult(int resultCode, Intent data) {
+        if (resultCode != Activity.RESULT_OK || data == null || data.getData() == null) return;
+        Uri tree = data.getData();
+        try {
+            try {
+                activity.getContentResolver().takePersistableUriPermission(
+                        tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (SecurityException ignored) { /* The immediate read grant is sufficient. */ }
+            importMapPack(tree);
+        } catch (Exception error) {
+            listener.onStatus("Could not open the map-pack folder: " + error.getMessage());
+        }
+    }
+
+    private boolean beginImport() {
+        if (!IMPORTING.compareAndSet(false, true)) {
+            listener.onStatus("An import is already in progress.");
+            return false;
+        }
+        try {
+            if (!GameSession.isActive(activity)) return true;
+            listener.onStatus("Close the current game before importing data.");
+        } catch (IOException | RuntimeException e) {
+            listener.onStatus("Unable to check game session: " + e.getMessage());
+        }
+        IMPORTING.set(false);
+        return false;
+    }
+
+    private void importMapPack(Uri tree) {
+        if (!beginImport()) return;
+        File files = activity.getExternalFilesDir(null);
+        File gameRoot = new File(files != null ? files : activity.getFilesDir(), "Game Files");
+        File baseMod = new File(gameRoot, "mods/bf2");
+        listener.onStatus("Reading optional map pack…");
+        new Thread(() -> {
+            String message;
+            boolean success = false;
+            try {
+                if (activity.getSharedPreferences("import", Activity.MODE_PRIVATE).getBoolean("incomplete", false))
+                    throw new IOException("Finish the interrupted base-game import before adding a map pack.");
+                MapPackImport.Source source = new MapPackImport.Source() {
+                    public List<MapPackImport.Entry> children(MapPackImport.Entry directory) throws IOException {
+                        List<MapPackImport.Entry> entries = new ArrayList<>();
+                        for (Node node : GameDirectoryPicker.this.children(tree, directory.id))
+                            entries.add(new MapPackImport.Entry(node.id, node.name, node.directory, node.size));
+                        return entries;
+                    }
+                    public InputStream open(MapPackImport.Entry file) throws IOException {
+                        return activity.getContentResolver().openInputStream(
+                                DocumentsContract.buildDocumentUriUsingTree(tree, file.id));
+                    }
+                };
+                MapPackImport importer = new MapPackImport(source, (count, name) -> {
+                    long now = android.os.SystemClock.elapsedRealtime();
+                    if (now - lastProgress >= 500) {
+                        lastProgress = now;
+                        activity.runOnUiThread(() -> listener.onStatus("Importing map-pack file #" + count + ": " + name));
+                    }
+                });
+                MapPackImport.Entry selected = new MapPackImport.Entry(
+                        DocumentsContract.getTreeDocumentId(tree), "", true, -1);
+                SharedPreferences state = activity.getSharedPreferences("openbf2", Activity.MODE_PRIVATE);
+                MapPackImport.Result result = importer.install(baseMod, selected, basename -> {
+                    String previous = state.getString("mapPack", null);
+                    if (!state.edit().putString("mapPack", basename).commit()) {
+                        SharedPreferences.Editor rollback = state.edit();
+                        if (previous == null) rollback.remove("mapPack"); else rollback.putString("mapPack", previous);
+                        rollback.commit(); // Also restore SharedPreferences' in-memory value after a failed write.
+                        throw new IOException("Could not save the map-pack selection");
+                    }
+                });
+                message = "Imported " + result.maps + " optional bot maps; " + result.skipped
+                        + " incomplete or unsupported maps skipped. Stock maps are still available.";
+                success = true;
+            } catch (Exception e) {
+                message = "Map-pack import failed: " + e.getMessage();
+            } finally {
+                IMPORTING.set(false);
+            }
+            final String status = message;
+            final boolean imported = success;
+            activity.runOnUiThread(() -> {
+                if (imported) listener.onImported(baseMod.getAbsolutePath());
+                listener.onStatus(status);
+            });
+        }, "openbf2-map-pack-import").start();
     }
 
     private static final class Node {
@@ -135,7 +233,7 @@ final class GameDirectoryPicker {
     }
 
     private void importInstallation(Uri tree) {
-        if (!IMPORTING.compareAndSet(false, true)) return;
+        if (!beginImport()) return;
         File files = activity.getExternalFilesDir(null);
         final File gameRoot = new File(files != null ? files : activity.getFilesDir(), "Game Files");
         final File dst = new File(gameRoot, "mods/bf2");

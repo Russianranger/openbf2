@@ -56,6 +56,8 @@ private:
     void setHudMode(int);
     void updatePointer(bool);
     void updateCrosshair(world::IObject*);
+    // Applies the handheld infantry ADS policy to the ordinary crosshair only.
+    void updateInfantryCrosshair(world::IObject* soldier, world::IObject* kit);
     static void stopAbilitySounds(world::IObject*); // 7A59D0; ECX unused
     void updateWeapon(world::IObject*);
     // 7A5470. [INFERRED] name: the body hunts the PIFlareFire weapon and drives

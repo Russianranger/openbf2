@@ -32,6 +32,9 @@ header = r'''
 #include <sys/stat.h>
 #include <dlfcn.h>
 #include "Code/BF2/Game/GameServer/OfflineCoopBots.h"
+#include "Code/BF2/Game/GameServer/HostMapLayout.h"
+#define BF2_OFFLINE_MAP_PACK_TEST 1
+#include "Code/BF2/IO/File/OfflineMapPack.h"
 static std::string storage;
 static const char* SDL_GetAndroidExternalStoragePath() { return storage.c_str(); }
 static void installAndroidCrashReport() {}
@@ -78,10 +81,87 @@ int main(int argc,char** argv) {
         auto a=base;a.insert(a.end(),{"--hosted","--coop","--team1-bots",pair.first,"--team2-bots",pair.second});
         check(launch(a).empty(),"reject invalid native bot selection");
     }
+    for(const char* mode:{"gpm_coop","sp1","gpm_cq"}) for(const char* size:{"16","32","64"}) {
+        auto a=base;a.insert(a.end(),{"--hosted","--coop","--level","strike_at_karkand",
+            "--mode",mode,"--size",size,"--team1-bots","0","--team2-bots","0"});
+        auto command=launch(a);
+        check(command.find(std::string("+gameMode ")+mode)!=std::string::npos,"exact game mode");
+        check(command.find("+maxPlayers 1")!=std::string::npos,"offline human limit independent of layout");
+        check(command.find(std::strcmp(mode,"gpm_cq")==0?"+ai 0":"+ai 1")!=std::string::npos,"conquest disables AI");
+        check(read(storage+"/coop-maplist.con")==std::string("mapList.append strike_at_karkand ")+mode+" "+size+"\n","exact map list size");
+        check(dice::hfe::host_layout::selectedSize("strike_at_karkand",mode)==std::atoi(size),"size preserved through native +loadLevel insertion");
+        check(read(storage+"/coop-settings.con").find("sv.numPlayersNeededToStart 1\n")!=std::string::npos,"one human starts offline match");
+    }
+    for(const char* size:{"0","17","128","-1","2147483647"}) {
+        auto a=base;a.insert(a.end(),{"--hosted","--coop","--level","strike_at_karkand","--size",size});
+        check(launch(a).empty(),"reject unavailable native layout size");
+    }
+    auto mixed=base;mixed.insert(mixed.end(),{"--hosted","--coop","--level","Gulf_of_Oman","--mode","gpm_coop","--size","64"});
+    check(!launch(mixed).empty(),"mixed-case imported map launches");
+    check(dice::hfe::host_layout::selectedSize("gulf_of_oman","GPM_COOP")==64,"case-insensitive exact map identity");
+    check(dice::hfe::host_layout::selectedSize("gulf_of_oman_extra","gpm_coop")==0,"map identity cannot match a prefix");
+    auto invalid=base;invalid.insert(invalid.end(),{"--hosted","--coop","--level","strike_at_karkand","--mode","gpm_cq","--size","64","--team1-bots","1","--team2-bots","0"});
+    check(launch(invalid).empty(),"conquest refuses bots");
+    auto menu=base;menu.push_back("--menu");
+    const std::string menuCommand=launch(menu);
+    check(!menuCommand.empty(),"interactive menu remains launchable");
+    for(const char* option:{"+loadLevel","+hostServer","+joinServer","+ai 1"})
+        check(menuCommand.find(option)==std::string::npos,"menu does not deploy a match");
+    for(const char* flag:{"BF2_PORT_DIRECT_START","BF2_PORT_LOCAL_COOP",
+                         "BF2_PORT_COOP_TEAM1_BOTS","BF2_PORT_COOP_TEAM2_BOTS",
+                         "BF2_PORT_HOST_LEVEL","BF2_PORT_HOST_MODE","BF2_PORT_HOST_SIZE"})
+        check(!std::getenv(flag),"menu clears previous direct deployment state");
     auto lan=base;lan.insert(lan.end(),{"--hosted","--level","strike_at_karkand"});
     check(launch(lan).find("+maxPlayers 16")!=std::string::npos,"ordinary host limit");
     check(!std::getenv("BF2_PORT_LOCAL_COOP")&&!std::getenv("BF2_PORT_COOP_TEAM1_BOTS")&&!std::getenv("BF2_PORT_COOP_TEAM2_BOTS"),"LAN clears offline scope");
     check(read(storage+"/serversettings.con").find("coopBotCount")==std::string::npos,"LAN config isolation");
+    lan.insert(lan.end(),{"--size","64"});
+    check(launch(lan).find("+maxPlayers 64")!=std::string::npos,"LAN host uses selected capacity");
+    check(read(storage+"/maplist.con")=="mapList.append strike_at_karkand gpm_cq 64\n","LAN exact size");
+    auto join=base;join.insert(join.end(),{"--connect","127.0.0.1:17667"});launch(join);
+    check(!std::getenv("BF2_PORT_HOST_SIZE")&&!std::getenv("BF2_PORT_HOST_MODE")&&!std::getenv("BF2_PORT_HOST_LEVEL"),"join clears hosted layout scope");
+    const std::string pack="openbf2_maps_0123456789abcdef0123456789abcdef";
+    const std::string packLevel=game+"/mods/"+pack+"/levels/strike_at_karkand";
+    for(const std::string& dir:{game+"/mods",game+"/mods/"+pack,game+"/mods/"+pack+"/levels",packLevel,packLevel+"/info"})
+        mkdir(dir.c_str(),0700);
+    for(const char* file:{"server.zip","client.zip","info/strike_at_karkand.desc"})
+        std::ofstream(packLevel+"/"+file)<<"present";
+    auto packed=base;packed.insert(packed.end(),{"--hosted","--coop","--level","Strike_At_Karkand",
+        "--mode","gpm_coop","--size","64","--map-pack",pack});
+    const auto packedCommand=launch(packed);
+    check(packedCommand.find("+modPath mods/bf2 ")==0&&packedCommand.find(pack)==std::string::npos,"pack retains base mod and engine command line identity");
+    check(std::getenv("BF2_PORT_MAP_PACK")&&pack==std::getenv("BF2_PORT_MAP_PACK"),"pack selection is local environment state");
+    check(read(storage+"/coop-maplist.con")=="mapList.append Strike_At_Karkand gpm_coop 64\n","pack carries exactly one selected map and size");
+    dice::hfe::offline_maps::Selection selected;
+    check(dice::hfe::offline_maps::selection(selected)&&selected.level=="strike_at_karkand"&&selected.size==64,"pack canonicalizes map case without changing selected layout");
+    for(const std::string& id:{std::string(""),std::string("../bf2"),pack+"a",pack.substr(1),std::string("openbf2_maps_0123456789ABCDEF0123456789abcdef")}) {
+        auto a=packed;a.back()=id;
+        check(launch(a).empty()&&!std::getenv("BF2_PORT_MAP_PACK"),"invalid pack id fails and clears overlay");
+    }
+    for(const std::vector<std::string>& extra:std::vector<std::vector<std::string>>{
+        {"--map-pack",pack},{"--level","gulf_of_oman"},{"--size","32"},{"--menu"},{"--connect","10.0.0.1"}}) {
+        auto a=packed;a.insert(a.end(),extra.begin(),extra.end());
+        check(launch(a).empty()&&!std::getenv("BF2_PORT_MAP_PACK"),"duplicate or non-offline pack request rejected");
+    }
+    auto noSize=base;noSize.insert(noSize.end(),{"--hosted","--coop","--level","strike_at_karkand","--map-pack",pack});
+    check(launch(noSize).empty(),"pack requires explicit size");
+    auto incomplete=base;incomplete.push_back("--map-pack");check(launch(incomplete).empty(),"pack flag requires value");
+    for(const char* level:{"../strike_at_karkand","strike_at_karkand;quit",""}) {
+        auto a=base;a.insert(a.end(),{"--hosted","--coop","--level",level,"--size","64","--map-pack",pack});
+        check(launch(a).empty(),"pack rejects invalid map id");
+    }
+    auto remote=base;remote.insert(remote.end(),{"--hosted","--level","strike_at_karkand","--size","64","--map-pack",pack});
+    check(launch(remote).empty(),"LAN hosting cannot use optional offline overlay");
+    for(const char* file:{"server.zip","client.zip","info/strike_at_karkand.desc"}) {
+        const std::string path=packLevel+"/"+file;
+        check(std::rename(path.c_str(),(path+".off").c_str())==0,"temporarily remove pack input");
+        check(launch(packed).empty()&&!std::getenv("BF2_PORT_MAP_PACK"),"missing selected input refuses fallback");
+        check(std::rename((path+".off").c_str(),path.c_str())==0,"restore pack input");
+    }
+    for(const auto& next:std::vector<std::vector<std::string>>{menu,lan,join,noSize}) {
+        check(!launch(packed).empty(),"valid pack can launch again");
+        launch(next);check(!std::getenv("BF2_PORT_MAP_PACK"),"next menu/LAN/join/invalid request clears pack state");
+    }
     std::printf("PASS %d production Android launch/config checks\n",checks);
 }
 '''

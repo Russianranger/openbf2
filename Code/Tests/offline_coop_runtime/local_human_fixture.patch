@@ -1,0 +1,24 @@
+--- a/Code/BF2/Game/GameServer/GameServer.cpp
++++ b/Code/BF2/Game/GameServer/GameServer.cpp
+@@ -587,6 +587,11 @@
+         }
+     }
+
++#if DEDICATED
++    // [TEMP] Headless QA entrant at the real listen-server creation boundary.
++    if (std::getenv("BF2_LAYOUT_TEST_HUMAN") && std::string(std::getenv("BF2_LAYOUT_TEST_HUMAN")) == "1")
++        if (createPlayer("Layout QA Human", false) == -1) return false;
++#endif
+ #if !DEDICATED
+     // [PLATFORM] Listen servers create the local human player; dedicated servers accept remote humans only.
+     // Failure to create the local player fails startup.
+@@ -3248,5 +3253,9 @@
+ // Keep the copy/temporary lifetime at the typed virtual boundary; its bool result is discarded.
+ void inputManagerSetControlMap(IBase* inputManager, const std::string& mapName)
+ {
++#if DEDICATED
++    // [TEMP] Dedicated QA local-human fixture has no client input subsystem.
++    if (!inputManager) return;
++#endif
+     static_cast<io::IInputManager*>(inputManager)->setPlayerControlMap(mapName);
+ }

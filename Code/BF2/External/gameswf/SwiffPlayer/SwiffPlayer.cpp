@@ -33,6 +33,9 @@
 #include "base/tu_file.h"   // the file_opener_callback return type
 #include "base/image.h"     // image::rgb / image::rgba (create_bitmap_info_rgb/rgba read w/h)
 #include "gameswf_action.h" // as_object / as_value / get_global_object - the AS-bridge graph build
+#if defined(__ANDROID__)
+#include "SingleplayerMenuFlow.h"
+#endif
 
 #include <new>
 #include <string>
@@ -3221,6 +3224,10 @@ void as_logic_getStorageString(const gameswf::fn_call& fn)
     renddx9abi::HostString a(fn.arg(0).to_string());
     renddx9abi::HostString b(fn.arg(1).to_string());
     const std::string out = h->getStorageString(a, b);
+#if defined(__ANDROID__)
+    // A profile transition reloads the movie and redefines its quick-start function.
+    openbf2::prepareSingleplayerMapMenu(fn, a.c_str(), out.c_str());
+#endif
     fn.result->set_tu_string(tu_string(out.c_str()));
 }
 
@@ -3233,6 +3240,10 @@ void as_logic_setStorageString(const gameswf::fn_call& fn)
     renddx9abi::HostString a(fn.arg(0).to_string());
     renddx9abi::HostString b(fn.arg(1).to_string());
     h->setStorageString(a, b);
+#if defined(__ANDROID__)
+    // Stock first-run Singleplayer sets noobieSP before creating its offline profile.
+    openbf2::prepareSingleplayerMapMenu(fn, a.c_str(), b.c_str());
+#endif
 }
 
 } // anonymous namespace

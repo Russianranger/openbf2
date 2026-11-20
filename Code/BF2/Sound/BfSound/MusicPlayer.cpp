@@ -8,6 +8,7 @@
 #include "../../Core/ClassManager.h"
 #include "../../Core/SmartItf.h"
 #include "../../Core/Debug.h"
+#include "../../Core/StringUtil.h"
 #include "../../Game/Main/Game.h"
 #include "../../Menu/ISwiffHost.h"
 #include "../BfSound.h"
@@ -85,6 +86,14 @@ void MusicPlayer::setState(int mode, const char* levelPath)
             std::fflush(stderr);
         }
     }
+#if defined(__ANDROID__)
+    // [CHOSEN, not recovered] Direct launches play the selected map's track, never the menu theme.
+    if (std::getenv("BF2_PORT_DIRECT_START"))
+    {
+        if (mode == 0) return;
+        if (mode == 2) { startDirectMapMusic(levelPath); return; }
+    }
+#endif
     if (!classManager->getSingleton("SwiffHost"))
         return;
     switch (m_state)
@@ -140,6 +149,13 @@ void MusicPlayer::handleEvent(EventCategory category, unsigned int id, EventNode
     if (id == 3)
     {
         const char* levelPath = static_cast<const std::string*>(data)->c_str();
+#if defined(__ANDROID__)
+        if (std::getenv("BF2_PORT_DIRECT_START"))
+        {
+            startDirectMapMusic(levelPath);
+            return;
+        }
+#endif
         if (!classManager->getSingleton("SwiffHost"))
             return;
         switch (m_state)
@@ -167,6 +183,46 @@ void MusicPlayer::handleEvent(EventCategory category, unsigned int id, EventNode
 }
 
 #if defined(__ANDROID__)
+void MusicPlayer::startDirectMapMusic(const char* levelPath)
+{
+    // [CHOSEN, not recovered] Keep selection scoped to this map's descriptor. Missing metadata
+    // or audio stays silent, without retaining another round's track or substituting menu music.
+    ISoundEngine* const engine = g_bfSound->engine();
+    engine->stopMusic(0.0f);
+    m_state = 0;
+    std::string mapName(levelPath ? levelPath : "");
+    for (char& c : mapName) if (c == '\\') c = '/';
+    if (mapName.size() >= 7 && !compareIgnoreCase(mapName.substr(0, 7), "levels/"))
+        mapName.erase(0, 7);
+    while (!mapName.empty() && mapName.back() == '/') mapName.pop_back();
+    ui::ISwiffHost* const host = static_cast<ui::ISwiffHost*>(classManager->getSingleton("SwiffHost"));
+    IModInfo* const info = host ? static_cast<IModInfo*>(host->getModInfo()) : nullptr;
+    const IModInfo::Map* const map = info ? info->findMapFromCurrentMod(mapName) : nullptr;
+    if (!map)
+    {
+        std::fprintf(stderr, "[MUSIC] map=%s: no descriptor; loading music disabled\n", mapName.c_str());
+        return;
+    }
+    std::string track = map->music;
+    const auto first = track.find_first_not_of(" \t\r\n");
+    track = first == std::string::npos ? std::string() :
+        track.substr(first, track.find_last_not_of(" \t\r\n") - first + 1);
+    for (char& c : track) if (c == '\\') c = '/';
+    if (track.empty())
+    {
+        std::fprintf(stderr, "[MUSIC] map=%s: descriptor has no loading track\n", mapName.c_str());
+        return;
+    }
+    // BfSound's file callbacks resolve this path through the mounted mod/archive filesystem,
+    // whose asset lookup is case-insensitive. Do not choose a different faction by map name.
+    const bool playing = engine->loadMusic(track.c_str()) && engine->playMusic();
+    if (playing) m_state = 2;
+    else engine->stopMusic(0.0f);
+    std::fprintf(stderr, "[MUSIC] map=%s track=%s playback=%s\n", mapName.c_str(),
+                 track.c_str(), playing ? "started" : "unavailable");
+    std::fflush(stderr);
+}
+
 void MusicPlayer::finishDirectLoading()
 {
     // [CHOSEN, not recovered] Direct co-op has no Flash loading movie to send event 5.

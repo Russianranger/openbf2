@@ -57,17 +57,54 @@ struct Param
     unsigned cls = PC_SCALAR, type = PT_FLOAT, rows = 1, columns = 1, elements = 0;
     std::vector<unsigned char> data;
     std::vector<std::unique_ptr<Param>> annotations;
-    std::vector<std::unique_ptr<Param>> children;   // the elements of a string array
+    std::vector<std::unique_ptr<Param>> children;   // array element handles
+    std::vector<std::unique_ptr<Param>> members;    // structure member handles
+    Param* storageParent = nullptr;
+    unsigned storageOffset = 0;
     std::vector<StateAssign> samplerStates;
     IDirect3DBaseTexture9* texture = nullptr;
     bool isObject() const { return cls == PC_OBJECT; }
-    unsigned count() const { return (elements ? elements : 1) * rows * columns; }
+    unsigned elementCount() const
+    {
+        if (cls != PC_STRUCT) return rows * columns;
+        unsigned size = 0;
+        for (const auto& member : members) size += member->count();
+        return size;
+    }
+    unsigned count() const { return (elements ? elements : 1) * elementCount(); }
+    unsigned scalarType(unsigned index) const
+    {
+        if (cls != PC_STRUCT) return type;
+        const unsigned size = elementCount();
+        if (!size) return PT_VOID;
+        index %= size;
+        for (const auto& member : members)
+        {
+            if (index < member->count()) return member->scalarType(index);
+            index -= member->count();
+        }
+        return PT_VOID;
+    }
+    unsigned char* bytes()
+    {
+        if (!storageParent) return data.empty() ? nullptr : data.data();
+        unsigned char* const base = storageParent->bytes();
+        return base ? base + storageOffset : nullptr;
+    }
+};
+
+// D3DX SetValue uses tightly packed values; CTAB describes their separate shader-register layout.
+struct ConstantType
+{
+    unsigned cls = PC_SCALAR, type = PT_FLOAT, rows = 1, columns = 1, elements = 1;
+    std::vector<ConstantType> members;
 };
 
 struct ShaderConstant
 {
     string name;
     unsigned set, reg, count, cls, rows, columns;
+    ConstantType layout;
 };
 
 struct Shader
@@ -431,7 +468,7 @@ private:
     const string& s;
     size_t i = 0;
     string code;
-    std::map<string, std::vector<std::pair<std::pair<unsigned, unsigned>, string>>> structs;
+    std::map<string, std::unique_ptr<Param>> structs;
 
     void ws()
     {
@@ -511,10 +548,34 @@ private:
     Shader* compileSpec(const string& value, bool pixel);
     void structure();
     Param* addParam(std::unique_ptr<Param> p);
+    void bindViews(Param& p);
 };
+
+std::unique_ptr<Param> copyShape(const Param& source)
+{
+    std::unique_ptr<Param> p(new Param);
+    p->name = source.name;
+    p->semantic = source.semantic;
+    p->cls = source.cls;
+    p->type = source.type;
+    p->rows = source.rows;
+    p->columns = source.columns;
+    p->elements = source.elements;
+    for (const auto& member : source.members) p->members.push_back(copyShape(*member));
+    return p;
+}
 
 void Parser::describe(Param& p, const string& rawType)
 {
+    const auto structure = structs.find(rawType);
+    if (structure != structs.end())
+    {
+        p.cls = PC_STRUCT;
+        p.type = PT_VOID;
+        for (const auto& member : structure->second->members)
+            p.members.push_back(copyShape(*member));
+        return;
+    }
     string t = lower(rawType);
     const size_t bracket = t.find('<');
     if (bracket != string::npos)
@@ -599,11 +660,11 @@ void Parser::setDefault(Param& p, string value)
     if (p.isObject()) return;
     const std::vector<double> numbers = numberList(value);
     if (p.elements == 0xFFFFFFFFu)
-        p.elements = static_cast<unsigned>(numbers.size() / std::max(1u, p.rows * p.columns));
+        p.elements = static_cast<unsigned>(numbers.size() / std::max(1u, p.elementCount()));
     p.data.assign(p.count() * 4, 0);
     for (size_t n = 0; n < numbers.size() && n < p.count(); ++n)
     {
-        if (p.type == PT_FLOAT)
+        if (p.scalarType(static_cast<unsigned>(n)) == PT_FLOAT)
             reinterpret_cast<float*>(p.data.data())[n] = static_cast<float>(numbers[n]);
         else
             reinterpret_cast<int*>(p.data.data())[n] = static_cast<int>(static_cast<long long>(numbers[n]));
@@ -651,9 +712,34 @@ Param* Parser::addParam(std::unique_ptr<Param> p)
         raw->data.assign(raw->count() * 4, 0);
     }
     fx.handles.insert(raw);
+    bindViews(*raw);
     fx.byName[raw->name] = raw;
     fx.params.push_back(std::move(p));
     return raw;
+}
+
+void Parser::bindViews(Param& p)
+{
+    unsigned offset = 0;
+    for (auto& member : p.members)
+    {
+        member->storageParent = &p;
+        member->storageOffset = offset;
+        offset += member->count() * 4;
+        fx.handles.insert(member.get());
+        bindViews(*member);
+    }
+    if (p.isObject() || !p.elements || p.elements == 0xFFFFFFFFu) return;
+    for (unsigned n = 0; n < p.elements; ++n)
+    {
+        auto element = copyShape(p);
+        element->elements = 0;
+        element->storageParent = &p;
+        element->storageOffset = n * p.elementCount() * 4;
+        fx.handles.insert(element.get());
+        bindViews(*element);
+        p.children.push_back(std::move(element));
+    }
 }
 
 std::vector<StateAssign> Parser::samplerState()
@@ -791,11 +877,64 @@ void Parser::structure()
         untilSemicolon();
         return;
     }
-    i = matching(i, '{', '}');
+    const size_t end = matching(i, '{', '}');
+    ++i;
+    std::unique_ptr<Param> layout(new Param);
+    layout->cls = PC_STRUCT;
+    while (i < end && peek() != '}')
+    {
+        string type = readType();
+        while (type == "row_major" || type == "column_major" || type == "const")
+            type = readType();
+        if (type.empty()) { ++i; continue; }
+        for (;;)
+        {
+            std::unique_ptr<Param> member(new Param);
+            member->name = ident();
+            if (member->name.empty()) { untilSemicolon(); break; }
+            describe(*member, type);
+            if (peek() == '[')
+            {
+                const size_t close = matching(i, '[', ']');
+                double n = 0;
+                if (evaluate(s.substr(i + 1, close - i - 2), &n) && n > 0)
+                    member->elements = static_cast<unsigned>(n);
+                i = close;
+            }
+            if (eat(':')) ident();
+            layout->members.push_back(std::move(member));
+            if (eat(',')) continue;
+            if (!eat(';')) untilSemicolon();
+            break;
+        }
+    }
+    i = end;
+    structs[name] = std::move(layout);
     if (peek() != ';')
     {
-        // An instance declared with the struct stays verbatim.
-        untilSemicolon();
+        // BF2's UV animation block is an anonymous struct instance, not a type declaration.
+        for (;;)
+        {
+            std::unique_ptr<Param> instance(new Param);
+            instance->name = ident();
+            if (instance->name.empty()) { untilSemicolon(); break; }
+            describe(*instance, name);
+            if (peek() == '[')
+            {
+                const size_t close = matching(i, '[', ']');
+                double n = 0;
+                if (evaluate(s.substr(i + 1, close - i - 2), &n) && n > 0)
+                    instance->elements = static_cast<unsigned>(n);
+                i = close;
+            }
+            if (eat(':')) instance->semantic = ident();
+            annotations(instance->annotations);
+            if (eat('=')) setDefault(*instance, untilSemicolon());
+            addParam(std::move(instance));
+            if (eat(',')) continue;
+            eat(';');
+            break;
+        }
         code.append(s, start, i - start);
         code += '\n';
         return;
@@ -803,7 +942,6 @@ void Parser::structure()
     ++i;
     code.append(s, start, i - start);
     code += '\n';
-    structs[name];
 }
 
 void Parser::declaration(const string&)
@@ -1018,6 +1156,25 @@ void Parser::run()
 
 // ----- compiling --------------------------------------------------------------------------------
 
+ConstantType readConstantType(const unsigned char* table, size_t bytes, size_t at, unsigned depth = 0)
+{
+    ConstantType result;
+    if (depth > 32 || at > bytes || bytes - at < 16) return result;
+    const auto u16 = [&](size_t offset) { unsigned short v; std::memcpy(&v, table + offset, 2); return unsigned(v); };
+    const auto u32 = [&](size_t offset) { unsigned v; std::memcpy(&v, table + offset, 4); return v; };
+    result.cls = u16(at);
+    result.type = u16(at + 2);
+    result.rows = u16(at + 4);
+    result.columns = u16(at + 6);
+    result.elements = std::max(1u, u16(at + 8));
+    const unsigned count = u16(at + 10);
+    const size_t members = u32(at + 12);
+    if (members <= bytes && count <= (bytes - members) / 8)
+        for (unsigned n = 0; n < count; ++n)
+            result.members.push_back(readConstantType(table, bytes, u32(members + n * 8 + 4), depth + 1));
+    return result;
+}
+
 std::vector<ShaderConstant> readConstants(const unsigned* code, size_t words)
 {
     std::vector<ShaderConstant> out;
@@ -1026,7 +1183,7 @@ std::vector<ShaderConstant> readConstants(const unsigned* code, size_t words)
         const unsigned token = code[w];
         if ((token & 0xFFFF) != 0xFFFE) break;
         const unsigned length = (token >> 16) & 0x7FFF;
-        if (length >= 7 && code[w + 1] == 0x42415443u)     // 'CTAB'
+        if (length >= 7 && length < words - w && code[w + 1] == 0x42415443u)     // 'CTAB'
         {
             const unsigned char* const table = reinterpret_cast<const unsigned char*>(code + w + 2);
             const auto u32 = [&](size_t at) { unsigned v; std::memcpy(&v, table + at, 4); return v; };
@@ -1045,6 +1202,7 @@ std::vector<ShaderConstant> readConstants(const unsigned* code, size_t words)
                 k.cls = u16(type);
                 k.rows = u16(type + 4);
                 k.columns = u16(type + 6);
+                k.layout = readConstantType(table, (length - 1) * 4, type);
                 out.push_back(std::move(k));
             }
             break;
@@ -1238,10 +1396,10 @@ Shader* Effect::resolve(const ShaderRef& ref)
             index = static_cast<size_t>(n);
         else if (Param* p = param(inner.c_str()))
         {
-            if (!p->data.empty())
+            if (p->bytes())
                 index = p->type == PT_FLOAT
-                    ? static_cast<size_t>(*reinterpret_cast<const float*>(p->data.data()))
-                    : static_cast<size_t>(*reinterpret_cast<const int*>(p->data.data()));
+                    ? static_cast<size_t>(*reinterpret_cast<const float*>(p->bytes()))
+                    : static_cast<size_t>(*reinterpret_cast<const int*>(p->bytes()));
         }
     }
     auto it = shaderVariables.find(name);
@@ -1349,15 +1507,15 @@ bool Effect::stateValue(const StateInfo& info, const string& rawValue, unsigned*
 
     if (Param* p = param(text.c_str()))
     {
-        if (p->data.empty()) return false;
+        if (!p->bytes()) return false;
         if (p->type == PT_FLOAT)
         {
-            const float f = *reinterpret_cast<const float*>(p->data.data());
+            const float f = *reinterpret_cast<const float*>(p->bytes());
             if (info.isFloat) std::memcpy(out, &f, 4);
             else *out = static_cast<unsigned>(f);
         }
         else
-            *out = *reinterpret_cast<const unsigned*>(p->data.data());
+            *out = *reinterpret_cast<const unsigned*>(p->bytes());
         return true;
     }
 
@@ -1416,6 +1574,45 @@ void Effect::applySampler(Param* sampler, unsigned stage)
     }
 }
 
+void packConstant(const ConstantType& type, Param& source, unsigned& scalar,
+                  float* registers, unsigned& reg, unsigned limit, bool boolRegisters)
+{
+    const auto read = [&](unsigned index) {
+        if (index >= source.count()) return 0.0f;
+        if (source.scalarType(index) == PT_FLOAT)
+            return reinterpret_cast<const float*>(source.bytes())[index];
+        return static_cast<float>(reinterpret_cast<const int*>(source.bytes())[index]);
+    };
+    for (unsigned element = 0; element < type.elements; ++element)
+    {
+        if (type.cls == PC_STRUCT)
+        {
+            for (const auto& member : type.members)
+                packConstant(member, source, scalar, registers, reg, limit, boolRegisters);
+            continue;
+        }
+        const bool matrix = type.cls == PC_MATRIX_ROWS || type.cls == PC_MATRIX_COLUMNS;
+        const bool byColumn = type.cls == PC_MATRIX_COLUMNS;
+        const unsigned lines = boolRegisters ? type.rows * type.columns
+                              : matrix ? (byColumn ? type.columns : type.rows) : 1;
+        for (unsigned line = 0; line < lines; ++line, ++reg)
+        {
+            if (reg >= limit) continue;
+            if (boolRegisters)
+                registers[reg * 4] = read(scalar + line);
+            else
+                for (unsigned c = 0; c < 4; ++c)
+                {
+                    if (matrix && byColumn && c < type.rows)
+                        registers[reg * 4 + c] = read(scalar + c * type.columns + line);
+                    else if ((!matrix || !byColumn) && c < type.columns)
+                        registers[reg * 4 + c] = read(scalar + line * type.columns + c);
+                }
+        }
+        scalar += type.rows * type.columns;
+    }
+}
+
 void Effect::uploadOne(Shader* shader)
 {
     float registers[4 * 256];
@@ -1433,46 +1630,17 @@ void Effect::uploadOne(Shader* shader)
                 applySampler(p, shader->pixel ? k.reg + r : D3DVERTEXTEXTURESAMPLER0 + k.reg + r);
             continue;
         }
-        if (p->data.empty()) continue;
+        if (!p->bytes()) continue;
         const unsigned count = std::min(k.count, 256u);
-        const unsigned rows = p->rows, columns = p->columns;
-        const unsigned total = p->count();
-        const auto read = [&](unsigned index) -> float {
-            if (index >= total) return 0.0f;
-            if (p->type == PT_FLOAT) return reinterpret_cast<const float*>(p->data.data())[index];
-            return static_cast<float>(reinterpret_cast<const int*>(p->data.data())[index]);
-        };
+        std::memset(registers, 0, count * 16);
+        unsigned scalar = 0, reg = 0;
+        packConstant(k.layout, *p, scalar, registers, reg, count, k.set == 0);
         if (k.set == 0)     // bool
         {
             int values[256];
-            for (unsigned r = 0; r < count; ++r) values[r] = read(r) != 0.0f;
+            for (unsigned r = 0; r < count; ++r) values[r] = registers[r * 4] != 0.0f;
             setConstantsB(shader->pixel, k.reg, values, count);
             continue;
-        }
-        std::memset(registers, 0, count * 16);
-        const bool matrix = p->cls == PC_MATRIX_ROWS || p->cls == PC_MATRIX_COLUMNS;
-        if (matrix)
-        {
-            const bool byColumn = k.cls == PC_MATRIX_COLUMNS;
-            const unsigned perElement = byColumn ? columns : rows;
-            const unsigned size = rows * columns;
-            for (unsigned r = 0; r < count; ++r)
-            {
-                const unsigned element = r / perElement, line = r % perElement;
-                for (unsigned c = 0; c < 4; ++c)
-                {
-                    if (byColumn && c < rows)
-                        registers[r * 4 + c] = read(element * size + c * columns + line);
-                    else if (!byColumn && c < columns)
-                        registers[r * 4 + c] = read(element * size + line * columns + c);
-                }
-            }
-        }
-        else
-        {
-            for (unsigned r = 0; r < count; ++r)
-                for (unsigned c = 0; c < columns && c < 4; ++c)
-                    registers[r * 4 + c] = read(r * columns + c);
         }
         if (k.set == 1)     // int
         {
@@ -1544,8 +1712,8 @@ void Effect::applyPassStates(Pass* pass)
             if (Param* p = param(bare.c_str()))
             {
                 const unsigned count = std::min(p->count(), 32u);
-                if (p->type == PT_FLOAT && !p->data.empty())
-                    std::memcpy(values, p->data.data(), count * 4);
+                if (p->type == PT_FLOAT && p->bytes())
+                    std::memcpy(values, p->bytes(), count * 4);
                 registers = (count + 3) / 4;
             }
             else
@@ -1665,7 +1833,7 @@ long fxGetParameterDesc(void* e, void* handle, ParameterDesc* out)
     out->columns = p->columns;
     out->elements = p->elements == 0xFFFFFFFFu ? 0 : p->elements;
     out->annotations = static_cast<unsigned>(p->annotations.size());
-    out->structMembers = 0;
+    out->structMembers = static_cast<unsigned>(p->members.size());
     out->flags = 0;
     out->bytes = p->isObject() ? 4u : p->count() * 4;
     return kOk;
@@ -1689,14 +1857,24 @@ long fxGetTechniqueDesc(void* e, void* handle, TechniqueDesc* out)
 void* fxGetParameter(void* e, void* parent, unsigned index)
 {
     Effect* const fx = self(e);
-    if (parent) return nullptr;
+    if (parent)
+    {
+        Param* const p = fx->param(parent);
+        return p && index < p->members.size() ? p->members[index].get() : nullptr;
+    }
     return index < fx->params.size() ? fx->params[index].get() : nullptr;
 }
 
 void* fxGetParameterByName(void* e, void* parent, const char* name)
 {
     Effect* const fx = self(e);
-    if (parent) return nullptr;
+    if (parent)
+    {
+        Param* const p = fx->param(parent);
+        if (p) for (auto& member : p->members)
+            if (member->name == name) return member.get();
+        return nullptr;
+    }
     auto it = fx->byName.find(name);
     return it == fx->byName.end() ? nullptr : it->second;
 }
@@ -1766,9 +1944,9 @@ void storeFloats(Param* p, const float* data, unsigned count)
     count = std::min(count, p->count());
     for (unsigned n = 0; n < count; ++n)
     {
-        if (p->type == PT_FLOAT) reinterpret_cast<float*>(p->data.data())[n] = data[n];
-        else if (p->type == PT_BOOL) reinterpret_cast<int*>(p->data.data())[n] = data[n] != 0.0f;
-        else reinterpret_cast<int*>(p->data.data())[n] = static_cast<int>(data[n]);
+        if (p->type == PT_FLOAT) reinterpret_cast<float*>(p->bytes())[n] = data[n];
+        else if (p->type == PT_BOOL) reinterpret_cast<int*>(p->bytes())[n] = data[n] != 0.0f;
+        else reinterpret_cast<int*>(p->bytes())[n] = static_cast<int>(data[n]);
     }
 }
 
@@ -1777,9 +1955,9 @@ void storeInts(Param* p, const int* data, unsigned count)
     count = std::min(count, p->count());
     for (unsigned n = 0; n < count; ++n)
     {
-        if (p->type == PT_FLOAT) reinterpret_cast<float*>(p->data.data())[n] = static_cast<float>(data[n]);
-        else if (p->type == PT_BOOL) reinterpret_cast<int*>(p->data.data())[n] = data[n] != 0;
-        else reinterpret_cast<int*>(p->data.data())[n] = data[n];
+        if (p->type == PT_FLOAT) reinterpret_cast<float*>(p->bytes())[n] = static_cast<float>(data[n]);
+        else if (p->type == PT_BOOL) reinterpret_cast<int*>(p->bytes())[n] = data[n] != 0;
+        else reinterpret_cast<int*>(p->bytes())[n] = data[n];
     }
 }
 
@@ -1788,8 +1966,8 @@ void storeMatrices(Param* p, const float* const* matrices, unsigned count)
 {
     const unsigned size = p->rows * p->columns;
     const unsigned elements = p->elements ? p->elements : 1;
-    if (p->data.empty()) return;
-    float* const out = reinterpret_cast<float*>(p->data.data());
+    if (!p->bytes()) return;
+    float* const out = reinterpret_cast<float*>(p->bytes());
     for (unsigned m = 0; m < count && m < elements; ++m)
         for (unsigned r = 0; r < p->rows && r < 4; ++r)
             for (unsigned c = 0; c < p->columns && c < 4; ++c)
@@ -1799,8 +1977,8 @@ void storeMatrices(Param* p, const float* const* matrices, unsigned count)
 long fxSetValue(void* e, void* handle, const void* data, unsigned bytes)
 {
     Param* const p = self(e)->param(handle);
-    if (!p || p->data.empty()) return kFail;
-    std::memcpy(p->data.data(), data, std::min<size_t>(bytes, p->data.size()));
+    if (!p || !p->bytes() || (!data && bytes)) return kFail;
+    if (bytes) std::memcpy(p->bytes(), data, std::min<size_t>(bytes, p->count() * 4u));
     return kOk;
 }
 
@@ -1815,9 +1993,9 @@ long fxSetBool(void* e, void* handle, int value)
 long fxGetInt(void* e, void* handle, int* out)
 {
     Param* const p = self(e)->param(handle);
-    if (!p || p->data.empty()) return kFail;
-    *out = p->type == PT_FLOAT ? static_cast<int>(*reinterpret_cast<const float*>(p->data.data()))
-                               : *reinterpret_cast<const int*>(p->data.data());
+    if (!p || !p->bytes()) return kFail;
+    *out = p->type == PT_FLOAT ? static_cast<int>(*reinterpret_cast<const float*>(p->bytes()))
+                               : *reinterpret_cast<const int*>(p->bytes());
     return kOk;
 }
 
@@ -1832,11 +2010,11 @@ long fxGetBool(void* e, void* handle, int* out)
 long fxGetIntArray(void* e, void* handle, int* out, unsigned count)
 {
     Param* const p = self(e)->param(handle);
-    if (!p || p->data.empty()) return kFail;
+    if (!p || !p->bytes()) return kFail;
     count = std::min(count, p->count());
     for (unsigned n = 0; n < count; ++n)
-        out[n] = p->type == PT_FLOAT ? static_cast<int>(reinterpret_cast<const float*>(p->data.data())[n])
-                                     : reinterpret_cast<const int*>(p->data.data())[n];
+        out[n] = p->type == PT_FLOAT ? static_cast<int>(reinterpret_cast<const float*>(p->bytes())[n])
+                                     : reinterpret_cast<const int*>(p->bytes())[n];
     return kOk;
 }
 

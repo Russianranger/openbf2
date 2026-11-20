@@ -25,6 +25,8 @@ def main():
     for name in ("source", "build", "out"):
         parser.add_argument("--" + name, type=lambda s: Path(s).resolve(), required=True)
     parser.add_argument("--ninja", default="ninja")
+    parser.add_argument("--tu", action="append", help="Source-relative TU; repeat to override the default set")
+    parser.add_argument("--define", action="append", default=[], help="Additional QA compiler definition")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     def ninja(*command):
@@ -34,6 +36,7 @@ def main():
         entry = next(e for e in compdb if e.get("file", "").endswith("/" + path)
                      and "bf2_engine_objects" in e["command"])
         command = shlex.split(entry["command"])
+        command[1:1] = ["-D" + value for value in args.define]
         original = command[command.index("-o") + 1]
         output = args.out / (Path(path).stem + ".o")
         for flag in ("-MF", "-MT", "-o"):
@@ -49,7 +52,7 @@ def main():
                     source_sha256=hashlib.sha256((args.source / path).read_bytes()).hexdigest(),
                     command=command)
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-        compiled = list(pool.map(compile_one, PATHS))
+        compiled = list(pool.map(compile_one, args.tu or PATHS))
     link = shlex.split(ninja("commands", "bf2").splitlines()[-1])
     if link[:2] == [":", "&&"]:
         link = link[2:]

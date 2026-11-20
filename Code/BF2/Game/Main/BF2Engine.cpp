@@ -39,6 +39,7 @@
 #include "../../IO/SettingsManager.h"       // [INFERRED] path; the class is SettingsManagerBase
 #include "../../IO/Console/Console.h"       // io::OldConsole, io::Console::ignoredString_
 #include "../../IO/File/FileManager.h"      // io::fileManager
+#include "../../IO/File/OfflineMapPack.h"
 #include "../Objects/IObject.h"             // world::Object
 #include "StatusMonitor.h"                  // [INFERRED] path
 #include "../../Core/LoadStat.h"
@@ -1404,6 +1405,37 @@ bool BF2Engine::initEngine()
         io::fileManager->addPath("mods/bf2");
     io::fileManager->addPath(modDirectory);
 
+    // [CHOSEN, not recovered] Validate the optional local data overlay before
+    // metadata discovery or game startup. It never becomes a mod or write path.
+    if (offline_maps::requestedId())
+    {
+        offline_maps::Selection pack;
+        if (compareIgnoreCase(modDirectory, "mods/bf2") || !offline_maps::selection(pack) ||
+            !offline_maps::requiredFilesPresent(pack))
+        {
+            std::fprintf(stderr, "[map-pack] Invalid or missing offline map pack; refusing fallback\n");
+            return false;
+        }
+        for (const char* name : {"server.zip", "client.zip"})
+        {
+            io::IArchive* archive = io::fileManager->openArchive(pack.levelDirectory() + name, 0, true);
+            if (!archive)
+            {
+                std::fprintf(stderr, "[map-pack] Cannot read selected %s\n", name);
+                return false;
+            }
+            const bool valid = std::strcmp(name, "client.zip") == 0 || archive->fileExists(
+                "GameModes/" + pack.mode + "/" + std::to_string(pack.size) + "/GamePlayObjects.con");
+            archive->release();
+            if (!valid)
+            {
+                std::fprintf(stderr, "[map-pack] Selected %s/%d is absent from pack; refusing stock layout\n",
+                    pack.mode.c_str(), pack.size);
+                return false;
+            }
+        }
+    }
+
     // initLogFiles is NON-virtual, takes one std::string and returns bool
     // (_ZN4dice3hfe6BF2Log12initLogFilesERKSs, 0x813EA50). Its argument is the same shared empty
     // literal, built into var_68 at 0x8138CD3-0x8138CDF; `this` is the field at +0x58.
@@ -1445,7 +1477,8 @@ bool BF2Engine::initEngine()
 #endif
 
     IModInfo* modInfo = (IModInfo*)classManager->getSingleton("ModInfo");
-    modInfo->init();                            // ModInfo vptr+0x10 = _ZN4dice3hfe7ModInfo4initEv
+    const bool modInfoReady = modInfo->init();   // ModInfo vptr+0x10 = _ZN4dice3hfe7ModInfo4initEv
+    if (offline_maps::requestedId() && !modInfoReady) return false;
                                                 // A failed renderer initialization skips console/client setup and proceeds to
                                                 // network initialization. Preserve this behavior for renderer-free dedicated startup.
     if (bf2EngineSetup->initRenderer())

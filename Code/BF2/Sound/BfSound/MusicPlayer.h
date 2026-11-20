@@ -26,6 +26,9 @@ public:
     virtual void handleEvent(EventCategory category, unsigned int id, EventNode* node, void* data);
 
 private:
+#if defined(__ANDROID__)
+    void startDirectMapMusic(const char* levelPath);
+#endif
     // [INFERRED] helper names; signatures and bodies read at these client PE addresses.
     void startMenuMusic();
     void startMapMusic(const char* levelPath);

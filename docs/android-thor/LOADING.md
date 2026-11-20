@@ -44,6 +44,20 @@ It uses the existing five-second `stopMusic` fade and returns the player to idle
 frames do nothing; the next map event can start and fade its own track. The hook does not
 change master, effects, voice, or stored music volume, and Flash launches retain their flow.
 
+Direct Android launches keep track selection inside the current mod's exact map metadata.
+They normalize the level-path separators and trim the descriptor's music path, then use the
+existing mounted filesystem to open it. A later menu-music request cannot replace that map
+track. Missing metadata, missing audio, or a failed playback start leaves the player idle and
+stops any previous round's track; no faction theme or menu song is guessed. The log now names
+the map, requested resource, and whether its stream started. This is intentional direct-mode
+policy, not a change to the desktop/Flash state table or to the sound plugin ABI.
+
+Stock maps share faction themes. The official 1.50 dedicated-server descriptors name the same
+`load_MEC_music.ogg` for Strike at Karkand, Gulf of Oman, and Road to Jalalabad. Dalian Plant
+names `load_CH_music.ogg`; Midnight Sun names `load_US_music.ogg`. Hearing the same MEC track
+on the first three maps is therefore expected. The resource bytes still come from the
+owner-imported active mod, and no game music is included in the APK.
+
 The changed lifecycle lives in `BF2Engine.cpp` and `Sound/BfSound/MusicPlayer.cpp`, both
 members of `bf2_client_objects` linked into the rebuilt APK's `libmain.so`. The existing
 `libBF2Audio.so` owns the Ogg worker and source-specific fade; it is intentionally unchanged.
@@ -73,6 +87,14 @@ direct-start lifecycle has been validated.
   completion from idle/menu/map music, no repeated fade requests and subsequent rounds.
   The same fixture can link against packaged `libmain.so` without compiling `MusicPlayer.cpp`
   to verify the delivered body. Its Android additions do not change the existing Windows checks.
+- `Code/Tests/map_music_android.cpp`: actual ModInfo/XML, map events, MusicPlayer, BF2Audio/OpenAL,
+  BfSound file callbacks, and loose/ZIP filesystems verify the map-resource route across six
+  rounds (MEC, MEC, MEC, CH, US, MEC). `make_map_music_fixture.py` accepts a private stock
+  `mods/bf2` directory and either its owned Common_client.zip or a generated compatible Ogg.
+  It stages mixed-case parent paths, lowercase loose assets as imported on Android, and
+  mixed-case ZIP entries. Generated audio proves routing/decoding but is not evidence about
+  the contents of a retail soundtrack. Link the executable to `libmain` and `libBF2Audio`,
+  then run it with the absolute staged root and `loose` or `zip` argument.
 - `Code/Tests/music_fade_android.cpp`: links to packaged `libBF2Audio.so`; the real Ogg worker
   and OpenAL null output driver verify a five-second decreasing gain, final stop, unchanged
   independent gameplay source/master/group volumes, and full-volume playback on the next round.
@@ -80,6 +102,13 @@ direct-start lifecycle has been validated.
   `python3 Code/Tests/make_music_fixture.py /absolute/path/tone.ogg` (requires ffmpeg).
   The generator adjusts the Vorbis vendor string and Ogg checksum because the reader rejects
   other vendor strings. The generated tone is not game content and is never packaged.
+- `Code/Tests/verify_packaged_music_android.sh` repeats all three native fixtures against an
+  APK's extracted libraries or a supplied native directory. Set `ANDROID_NDK_HOME` and pass
+  the APK/directory, Android ARM64 runner, private stock `mods/bf2`, and fresh output directory;
+  an optional final argument supplies owned Common_client.zip audio. The script compiles only
+  test sources, verifies that player methods are imported from the shared host, and hashes
+  the libraries before and after execution. Its JSON result records the audio provenance and
+  deliberately distinguishes generated decoder input from a supplied soundtrack archive.
 
 These checks cover publication, decoding, drawing and lifecycle boundaries. A physical
 Thor run is still required to confirm the complete loading-to-deployment transition.

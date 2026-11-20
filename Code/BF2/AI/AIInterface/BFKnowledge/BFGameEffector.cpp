@@ -106,7 +106,7 @@ int BFGameEffector::addBot(int& a, int& b, std::string& name)
     // equal weights - the engine balances, not the AI.
     b = world::playerManager->getTeamToAddPlayer(1.0f, 1.0f);
     offline_coop::BotCounts offline;
-    if (game && game->getCurrentMapGameMode() == "gpm_coop" &&
+    if (game && offline_coop::isBotMode(game->getCurrentMapGameMode().c_str()) &&
         offline_coop::readBotCounts(offline))
     {
         int team1 = 0, team2 = 0;

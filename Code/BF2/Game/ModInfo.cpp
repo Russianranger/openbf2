@@ -12,6 +12,8 @@
 #include "../Core/StringUtil.h"
 #include "../IO/File/IFileSystem.h"      // io::FileInfo - findFiles' element type
 #include "../IO/File/FileManager.h"      // io::fileManager, FileManager::findFiles
+#include "../IO/File/OfflineMapPack.h"
+#include <cstdio>
 #include "Utility/XMLDocument.h"         // XMLDocument/XMLNode - the two .desc readers
 
 namespace dice {
@@ -89,6 +91,10 @@ bool ModInfo::init()
     if (m_initialised)
         return false;
 
+    offline_maps::Selection selectedPack;
+    const bool packRequested = offline_maps::requestedId() != nullptr;
+    if (packRequested && !offline_maps::selection(selectedPack)) return false;
+
     // 1. every directory under mods/
     std::string modsPath("@ROOT@/");
     modsPath.append("mods/", strlen("mods/"));
@@ -102,6 +108,8 @@ bool ModInfo::init()
 
         if (!entry.isDirectory)
             continue;
+        // Imported level packs are data overlays, never executable mods.
+        if (offline_maps::validId(entry.name)) continue;
 
         Mod mod;                                                        // Mod::Mod()
         std::string path("mods/");                                      // 0x82F9F9x
@@ -138,6 +146,8 @@ bool ModInfo::init()
             {
                 if (!jt->isDirectory)
                     continue;
+                if (packRequested && equalsIgnoreCase(mod.path, "mods/bf2") &&
+                    equalsIgnoreCase(jt->name, selectedPack.level)) continue;
 
                 foundLevelDirs.push_back(jt->name);
 
@@ -148,6 +158,27 @@ bool ModInfo::init()
                     mod.maps.push_back(map);
             }
         }
+    }
+
+    if (packRequested)
+    {
+        bool added = false;
+        for (Mod& mod : m_mods)
+        {
+            if (!equalsIgnoreCase(mod.path, "mods/bf2")) continue;
+            Map map;
+            map.path = selectedPack.level;
+            const std::string levels = "@ROOT@/mods/" + selectedPack.id + "/levels/";
+            if (!parseMapDesc(&mod, levels, &map) || map.gameModes.empty())
+            {
+                std::fprintf(stderr, "[map-pack] Selected map descriptor is missing or invalid; refusing stock metadata\n");
+                return false;
+            }
+            mod.maps.push_back(map);
+            added = true;
+            break;
+        }
+        if (!added) return false;
     }
 
     if (m_mods.empty())                                                 // 0x82FA6xx

@@ -5,6 +5,7 @@
 #include "../../Sound/BfSound.h"
 #include "GameServer.h"
 #include "OfflineCoopBots.h"
+#include "HostMapLayout.h"
 #include "VoipServerConnection.h"
 #include "ClientInfo.h"                    // handleDataBlock parses a block-id-1 payload into one
 #include "../Persistence/AntiHacks.h"      // handleClientInfo's ranked name-hash record
@@ -534,10 +535,13 @@ bool GameServer::startServer(const std::string& a1, int port, int /* dead - neve
             // structurally cannot seed an empty deque - its validateIndex refuses); NON-empty ->
             // insert AT front. both arms then select entry 0 (the shared tail).
             std::string mode = settings->stringGet("GSGameMode", "gpm_cq");
+            // Keep the launcher's authored layout when +loadLevel adds the first
+            // entry; retail's size 0 otherwise falls back to the human limit.
+            const int layoutSize = host_layout::selectedSize(level.c_str(), mode.c_str());
             if (mapList->getMapCount() <= 0)
-                mapList->appendEntry(level, mode, 0, false);
+                mapList->appendEntry(level, mode, layoutSize, false);
             else
-                mapList->insertEntry(0, level, mode, 0, false);
+                mapList->insertEntry(0, level, mode, layoutSize, false);
             mapList->setCurrentMap(0, false);               // respects isModifiable - no override
         }
     }
@@ -666,7 +670,11 @@ bool GameServer::loadPath(const std::string& levelName)
 
     // NON-fatal (the correction): a failed game-mode init logs and the load continues.
     // The mode handed to Python is the entry's mode, not the setting.
-    if (!python::pythonHost()->initializeGameMode(entry->gameMode))
+    // Authored singleplayer layouts keep their sp1 asset paths, while this
+    // launcher's offline session uses the established co-op match rules.
+    offline_coop::BotCounts offlineRules;
+    const bool offlineSingleplayer = entry->gameMode == "sp1" && offline_coop::readBotCounts(offlineRules);
+    if (!python::pythonHost()->initializeGameMode(offlineSingleplayer ? "gpm_coop" : entry->gameMode))
     {
         Debug(DEBUGTYPE_6, "Game/GameServer/GameServer.cpp", 3822)
             << "failed to initialize gamemode";
@@ -733,16 +741,15 @@ void GameServer::limitCoopPlayers()
     const MapList::Entry* entry = mapList->getEntry(mapList->getCurrentMap());
     if (!entry)                                             // null-guarded here (unlike loadPath)
         return;
-    if (compareIgnoreCase(entry->gameMode, "gpm_coop") != 0)
-        return;
-
     offline_coop::BotCounts offline;
-    if (offline_coop::readBotCounts(offline))
+    if (offline_coop::isBotMode(entry->gameMode.c_str()) && offline_coop::readBotCounts(offline))
     {
         serverSettings->setMaxPlayers(1);
         serverSettings->setCoopBotCount(offline.total());
         return;
     }
+    if (compareIgnoreCase(entry->gameMode, "gpm_coop") != 0)
+        return;
 
     if (serverSettings->getMaxPlayers() > 32)
         serverSettings->setMaxPlayers(32);                  // the status-string return, discarded

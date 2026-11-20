@@ -31,10 +31,20 @@ public final class GameLaunchPlan {
 
     public static String[] forCoop(String modDir, String libDir, int width, int height,
                                    String player, String driver, String level, int team1, int team2) {
+        return forCoop(modDir, libDir, width, height, player, driver, level, "gpm_coop", 16, team1, team2);
+    }
+
+    public static String[] forCoop(String modDir, String libDir, int width, int height,
+                                   String player, String driver, String level, String mode, int size,
+                                   int team1, int team2) {
         if (team1 < 0 || team1 > MAX_COOP_BOTS || team2 < 0 || team2 > MAX_COOP_BOTS
                 || team1 + team2 > MAX_COOP_BOTS)
             throw new IllegalArgumentException("Use 0–63 bots total; one slot is reserved for you");
-        List<String> args = host(modDir, libDir, width, height, player, driver, level, true);
+        if (!GameContent.validMode(mode) || !GameContent.validSize(size))
+            throw new IllegalArgumentException("Select an available 16, 32 or 64 player layout");
+        if ("gpm_cq".equals(mode) && team1 + team2 != 0)
+            throw new IllegalArgumentException("This conquest layout requires zero bots; select an authored co-op layout for bots");
+        List<String> args = host(modDir, libDir, width, height, player, driver, level, true, mode, size);
         add(args, "--team1-bots", Integer.toString(team1));
         add(args, "--team2-bots", Integer.toString(team2));
         return args.toArray(new String[0]);
@@ -42,18 +52,26 @@ public final class GameLaunchPlan {
 
     public static String[] forHost(String modDir, String libDir, int width, int height,
                                    String player, String driver, String level, boolean coop) {
-        if (coop) return forCoop(modDir, libDir, width, height, player, driver, level);
-        return host(modDir, libDir, width, height, player, driver, level, false).toArray(new String[0]);
+        return forHost(modDir, libDir, width, height, player, driver, level, coop, 16);
+    }
+
+    public static String[] forHost(String modDir, String libDir, int width, int height,
+                                   String player, String driver, String level, boolean coop, int size) {
+        if (coop) return forCoop(modDir, libDir, width, height, player, driver, level, "gpm_coop", size, 8, 8);
+        return host(modDir, libDir, width, height, player, driver, level, false, "gpm_cq", size).toArray(new String[0]);
     }
 
     private static List<String> host(String modDir, String libDir, int width, int height,
-                                    String player, String driver, String level, boolean coop) {
+                                    String player, String driver, String level, boolean coop, String mode, int size) {
         if (level == null || !level.matches("[A-Za-z0-9_-]+"))
             throw new IllegalArgumentException("Invalid map name");
+        if (!GameContent.validSize(size)) throw new IllegalArgumentException("Invalid map layout size");
         List<String> args = common(modDir, libDir, width, height, player, driver);
         args.add("--hosted");
         if (coop) args.add("--coop");
         add(args, "--level", level);
+        add(args, "--mode", mode);
+        add(args, "--size", Integer.toString(size));
         return args;
     }
 

@@ -77,7 +77,8 @@ struct ModObserver : IModInfo {
     const Mod* getCurrentMod() const override
     { record("currentMod"); return hasMod ? &mod : nullptr; }
     std::string getCurrentModPath() override { std::abort(); }
-    const Map* findMapFromCurrentMod(const std::string&) override { std::abort(); }
+    const Map* findMapFromCurrentMod(const std::string& name) override
+    { requestedMap = name; record("currentMap:" + name); return hasMod && hasMap ? &map : nullptr; }
     const Map* findMapFromMod(const Mod*, const std::string&) override { std::abort(); }
     const Mod* getModFromName(const std::string&) override { std::abort(); }
     const Mod* getModFromPath(const std::string&) override { std::abort(); }
@@ -353,6 +354,43 @@ static void recoveredNullSound()
 }
 
 #if defined(__ANDROID__)
+static void directMapSelection()
+{
+    Fixture f;
+    f.sound.engine0.playResult = true;
+    setenv("BF2_PORT_DIRECT_START", "1", 1);
+    f.player->setState(0, nullptr);
+    expect({}, "direct launch cannot start unrelated menu music");
+    const char* names[] = {"strike_at_karkand", "gulf_of_oman", "road_to_jalalabad", "dalian_plant", "midnight_sun"};
+    const char* tracks[] = {"load_MEC_music.ogg", "load_MEC_music.ogg", "load_MEC_music.ogg", "load_CH_music.ogg", "load_US_music.ogg"};
+    for (unsigned i=0; i<5; ++i) {
+        f.host.mod.map.music = std::string(" \tcommon\\sound\\menu\\music\\") + tracks[i] + "\r\n";
+        std::string level = std::string("Levels\\") + names[i] + "\\";
+        f.event(3, &level);
+        check(f.host.mod.requestedMap == names[i], "direct load resolves the requested level name");
+        check(f.sound.engine0.lastMusic == std::string("common/sound/menu/music/") + tracks[i],
+              "direct load uses descriptor music with normalized whitespace/separators");
+        check(state(*f.player) == 2, "only successful direct playback becomes active map music");
+        f.clear(); f.player->setState(0, nullptr);
+        expect({}, "menu event cannot replace the current map track");
+        f.player->finishDirectLoading();
+        expect({"lookup:SwiffHost", "engine", "stop:5"}, "selected map retains the five-second gameplay fade");
+        f.clear();
+    }
+    for (int failure=0; failure<4; ++failure) {
+        f.host.mod.hasMap = failure != 0;
+        f.host.mod.map.music = failure == 1 ? " \r\n\t" : "missing/track.ogg";
+        f.sound.engine0.loadResult = failure != 2;
+        f.sound.engine0.playResult = failure != 3;
+        const unsigned before = f.sound.engine0.playCalls;
+        f.player->setState(2, "levels/missing/");
+        check(state(*f.player) == 0, "missing/empty/unplayable direct track stays idle");
+        check(f.sound.engine0.playCalls == before + (failure == 3 ? 1 : 0), "no menu or previous-track fallback");
+        f.clear();
+    }
+    unsetenv("BF2_PORT_DIRECT_START");
+}
+
 static void directLoading()
 {
     for (int initial : {0, 1, 2}) {
@@ -409,6 +447,7 @@ int main(int argc, char** argv)
     gates(); menuBranches(); mapBranches(); recoveredNullSound();
 #if defined(__ANDROID__)
     directLoading();
+    directMapSelection();
 #endif
     std::printf("MusicPlayer runtime: %u/%u passed\n", checks - failures, checks);
     return failures ? 1 : 0;

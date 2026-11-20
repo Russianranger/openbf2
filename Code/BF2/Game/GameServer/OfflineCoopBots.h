@@ -36,6 +36,11 @@ inline bool readBotCounts(BotCounts& counts)
         counts.total() <= maxBots;
 }
 
+inline bool isBotMode(const char* mode)
+{
+    return mode && (std::strcmp(mode, "gpm_coop") == 0 || std::strcmp(mode, "sp1") == 0);
+}
+
 // Humans never consume either team's bot quota. Fill the first team before the
 // second, just like the stock ratio path, without floating point rounding.
 inline int nextBotTeam(const BotCounts& counts, int team1Bots, int team2Bots)
