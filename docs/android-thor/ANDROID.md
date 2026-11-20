@@ -4,17 +4,18 @@ The ARM64 test application combines the Android SDL/Vulkan client from mackiller
 
 ## Update an existing installation
 
-Install 0.1.2 (version code 3) over 0.1.1 or 0.1.0. Android checks the original signing identity before installing the update. An in-place update preserves imported game files and the private Offline career database.
+Install 0.1.3 (version code 4) over 0.1.2 or an earlier signed Thor build. Android checks the original signing identity before installing the update. An in-place update preserves imported game files and the private Offline career database.
 
 ## Play an offline round
 
-1. Install the APK. Open **OpenBF2**, choose **Import Battlefield 2 installation**, and select the folder that contains `mods/bf2`, `python`, and `pylib-2.3.4.zip`. Keep the app open while the initial import finishes.
-2. Choose a player name and a map in **Offline co-op map**. Start with **Strike at Karkand** if it appears in your installation. The list is filtered for maps containing 16-player co-op placement data.
-3. For controller play, clear **Show touch controls** in the launcher. Turn on airplane mode and select **Play offline with bots**. The loading screen shows the selected map and its imported art when available. On the deployment screen, move the right stick and use RT to select a team, kit, and spawn point. The local server requests 16 bots, an even team split, and 50% difficulty. The round can start on the first human spawn.
-4. Play to a round result. Back at the launcher, open **Offline career**. Check your score, kills, deaths, completed rounds and rank. Close and reopen the app and check again. The nine local ranks use cumulative score. LAN sessions and unfinished rounds receive no career credit.
-5. Start a second offline match to check round restart. **Export game logs** makes a support file if the game stops.
+1. Open **Setup** to choose your player name. On a first installation, choose **Import Battlefield 2 installation** and select the folder containing `mods/bf2`, `python` and `pylib-2.3.4.zip`. Existing imports appear automatically.
+2. In **Deployment**, choose **Select map** and adjust the two bot counts. The launcher reads faction names and preview art from the imported map. The choices are maps with 16-player co-op placement data. The default is eight bots per side. The roster excludes your local soldier.
+3. Choose **Deploy**. At the team, kit and spawn screens, move the right stick and click with RT. The local server uses 50% bot difficulty. The stock map loading music fades as direct gameplay starts.
+4. Under **Controls → Controller bindings**, assign a Battlefield action to a button or key. You can also assign an action to a hold. With the default Xbox layout, tap B to crouch, hold B for prone, then tap B to stand. Crouch also toggles on the touchscreen. The launcher remembers your **Show touch controls** setting.
+5. Tap the gear or hold Start to open the game options. **Return to game** closes the panel, **Export logs** opens the Android save dialog, and **Return to launcher** leaves the current match available. Use **Resume match** to return with updated controls. To switch maps, use **End current match**, confirm, then deploy again.
+6. Finish a round and check **Career** for completed rounds, score, kills, deaths and rank. LAN sessions and unfinished rounds do not earn offline career credit.
 
-Use the Thor's Xbox controller mode for the button names in the [controller layout](https://github.com/Russianranger/openbf2/blob/android-engine/docs/android-thor/CONTROLS.md). For local network play, use **Host LAN** for a Conquest server or find/join a compatible server. LAN joining can request the product key from your own BF2 installation. Offline co-op uses a local player.
+The [controller guide](https://github.com/Russianranger/openbf2/blob/android-engine/docs/android-thor/CONTROLS.md) uses the logical button names from the Thor's Xbox mode. **LAN** hosts Conquest or joins a compatible server. Joining may require a product key from your own installation.
 
 ## Build and sign
 
@@ -23,7 +24,7 @@ Use a Linux x86-64 host, Git, Python 3, Make, CMake, Ninja, JDK 17 or 21, Androi
 ```sh
 android/build_thor.sh \
   --keystore /private/keys/openbf2.p12 --alias openbf2-thor \
-  --storepass /private/keys/store.pass --previous-apk /private/releases/OpenBF2-Thor-0.1.1-arm64.apk \
+  --storepass /private/keys/store.pass --previous-apk /private/releases/OpenBF2-Thor-0.1.2-arm64.apk \
   --output out/OpenBF2-Thor-arm64.apk
 ```
 
@@ -36,6 +37,20 @@ The build checks out the pinned Android engine under `ports/android-engine`. It 
 | Russianranger Thor design baseline | `4af39ef4157bc1566a32bbb4021ad2f2c3c8a239` |
 | kr4uzi gameplay and bot engine | `02cc5ac818582689efe3452755f40e5f55edc2c7` |
 | mackillerGR Stage 3.7 Android branch | `aefe0f802d9969fa03c0ebad9c9af742dc6231fd` |
+
+## 0.1.3 deployment and terrain
+
+The 0.1.3 APK is 50,124,434 bytes. Its SHA-256 is `095d81a57f758b965e37bba9ceb09357dba961e5670fd37b756168a24da87dab`. The package passed APK v3 signing verification with the 0.1.2 certificate and 16 KiB ZIP alignment. The released [engine revision](https://github.com/Russianranger/openbf2/commit/a060521a026b9e7fe3e91a83de7bf47eefa5db72) is pinned in this branch.
+
+The Thor owner confirmed that 0.1.2 corrected the weapon sights and soldier models. The new Karkand screenshots showed adjacent patches of textured ground and empty backdrop. The ARM64 terrain loader was reading the detailed tiles at a 400-byte stride while their native records occupy 416 bytes. The loader now uses the same native stride for the parent records and their children.
+
+Against stock Battlefield 2 1.50 Operation Road Rage data, the old loader corrupted four child links and gave 49 of the 64 detailed tiles an empty draw count. The corrected ARM64 loader preserved all links and counts. In a software Vulkan render of four adjacent tiles through the stock terrain shader, all four rendered after the change. One of those four rendered before the fix. Physical Karkand rendering remains a device check.
+
+The launcher uses the imported map's display name, preview and team names. The offline roster supports zero through 63 bots combined, reserving one player slot for the human. Deployment retains the map's 16-player placement layout. On Android 13, the actual launcher selected a second imported map, saved different counts for the two factions and opened the binding editor. Headless Karkand tests queried the live roster for 0/0, 0/5, 7/0, 3/5, 31/32 and 63/0 bots. The engine also honored the launcher when a test installation supplied conflicting AI population settings. The 63-bot capacity test did not measure handheld frame rate.
+
+Direct-start games now ask the BF2 music player to fade the loading track on the first ready game frame. The stock audio library faded a test track over five seconds, kept an independent playing source at its original gain, and restarted the next round's music at normal volume.
+
+The delivered controller bridge passed 124 native action-mapping checks. Android 13 tests covered button capture, tap/hold discrimination, remapping across the launcher and game processes, the gear touch target and returning to the same session. The final APK payloads matched those exercised by the runtime tests. The packaged AI completed a headless Karkand round and entered a second one. The existing 20-kit soldier-pose and material-state regressions also passed.
 
 ## 0.1.2 handheld fixes
 
