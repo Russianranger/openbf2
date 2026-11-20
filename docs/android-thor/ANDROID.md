@@ -4,13 +4,13 @@ The ARM64 test application combines the Android SDL/Vulkan client from mackiller
 
 ## Update an existing installation
 
-Install 0.1.1 (version code 2) over 0.1.0. Android checks the original signing identity before installing the update. An in-place update preserves imported game files and the private Offline career database.
+Install 0.1.2 (version code 3) over 0.1.1 or 0.1.0. Android checks the original signing identity before installing the update. An in-place update preserves imported game files and the private Offline career database.
 
 ## Play an offline round
 
 1. Install the APK. Open **OpenBF2**, choose **Import Battlefield 2 installation**, and select the folder that contains `mods/bf2`, `python`, and `pylib-2.3.4.zip`. Keep the app open while the initial import finishes.
 2. Choose a player name and a map in **Offline co-op map**. Start with **Strike at Karkand** if it appears in your installation. The list is filtered for maps containing 16-player co-op placement data.
-3. Turn on airplane mode and tap **Play offline with bots**. Choose a team, kit, and spawn point if prompted. The local server requests 16 bots, an even team split, and 50% difficulty. The round can start on the first human spawn.
+3. For controller play, clear **Show touch controls** in the launcher. Turn on airplane mode and select **Play offline with bots**. The loading screen shows the selected map and its imported art when available. On the deployment screen, move the right stick and use RT to select a team, kit, and spawn point. The local server requests 16 bots, an even team split, and 50% difficulty. The round can start on the first human spawn.
 4. Play to a round result. Back at the launcher, open **Offline career**. Check your score, kills, deaths, completed rounds and rank. Close and reopen the app and check again. The nine local ranks use cumulative score. LAN sessions and unfinished rounds receive no career credit.
 5. Start a second offline match to check round restart. **Export game logs** makes a support file if the game stops.
 
@@ -23,7 +23,7 @@ Use a Linux x86-64 host, Git, Python 3, Make, CMake, Ninja, JDK 17 or 21, Androi
 ```sh
 android/build_thor.sh \
   --keystore /private/keys/openbf2.p12 --alias openbf2-thor \
-  --storepass /private/keys/store.pass --previous-apk /private/releases/OpenBF2-Thor-0.1.0-arm64.apk \
+  --storepass /private/keys/store.pass --previous-apk /private/releases/OpenBF2-Thor-0.1.1-arm64.apk \
   --output out/OpenBF2-Thor-arm64.apk
 ```
 
@@ -36,6 +36,26 @@ The build checks out the pinned Android engine under `ports/android-engine`. It 
 | Russianranger Thor design baseline | `4af39ef4157bc1566a32bbb4021ad2f2c3c8a239` |
 | kr4uzi gameplay and bot engine | `02cc5ac818582689efe3452755f40e5f55edc2c7` |
 | mackillerGR Stage 3.7 Android branch | `aefe0f802d9969fa03c0ebad9c9af742dc6231fd` |
+
+## 0.1.2 handheld fixes
+
+The 0.1.2 ARM64 APK is 50,054,802 bytes, SHA-256 `758320d3a25f7292f7f01af951155c79d05db133a00037640d71c8fc4fc7f13c`. Android package identity, the 0.1.1 signing certificate, APK v3 verification and native 16 KiB ZIP alignment were checked against the final package. The [Android engine revision](https://github.com/Russianranger/openbf2/commit/c4a565fb0ef7e10f7bfb8f7a59a5ab95c7a7871e) supplies the game, renderer and input changes.
+
+The previous build reached a live match on a physical AYN Thor. Device screenshots showed a black map load, a dark rectangle over the M4 sight, and equipment floating above a soldier. The renderer log identified the bundled Turnip driver at 1920×1080. This update retains that resolution.
+
+| Area | Change and validation |
+| --- | --- |
+| Deployment, pause and Flash menus | SDL uses absolute mouse input when BF2 shows the pointer. The right stick moves a visible cursor and RT clicks. Returning to the game restores relative aiming. Android 13 input tests cover movement, a held trigger, mode changes and disconnects. |
+| Android launcher and touch controls | The right stick and RT also work in the launcher, its map selector, the career dialog and the LAN browser. The launcher saves **Show touch controls** immediately. Turning it off hides the virtual buttons and leaves menu touch and the controller cursor available. |
+| Map loading | Direct offline matches display the selected map’s imported artwork and available engine progress. The loader recognizes the DDS data inside stock `Info/loadmap.png` files. Independent decoding of a stock 512×512 file matched all pixels. The loading layer clears when the client reaches deployment or gameplay. |
+| Weapon sights | The Android effects implementation now applies material blend and depth changes made after a rendering pass starts. A DXVK software-Vulkan test used the stock 1.50 M4 sight. The broken path exposed zero scene pixels. The corrected path exposed the same 37,315 scene pixels as an explicit blend-state override in a 256×256 test. |
+| Soldier equipment | The ARM64 client now passes the live soldier bone array to the carried kit. The old x86 calling convention put an empty pointer in that argument on ARM64. Against the actual ARM64 renderer, all 20 stock US and MEC skinned kit variants followed the supplied pose. The test checked 167 bone matrices. |
+
+The Thor log also recorded a Vulkan surface loss during frame presentation. The Android activity now stops new frame presentation when the surface becomes unavailable and resumes after SDL receives a valid surface. Physical background and foreground behavior still needs a Thor retest.
+
+The extracted renderer and engine passed 23 menu, font and coordinate checks, and all 240 soldier attachment checks using 20 kit variants. Two startup and teardown cycles each registered and removed the 298 AI commands. Android 13 tests covered a saved touch setting, stick and trigger behavior, loading presentation, Android surface callbacks, and reopening the career database after a promotion. The physical Thor check below remains open.
+
+For the handset check, launch Strike at Karkand in airplane mode. Look for the map art before deployment. Use the right stick and RT to choose a spawn point, aim through an M4 sight, and inspect a nearby soldier's helmet and kit. Logs can be exported from the launcher while touch controls are hidden.
 
 ## 0.1.1 changes
 
