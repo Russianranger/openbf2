@@ -213,6 +213,12 @@ static_assert(sizeof(std::list<std::string>) == 16 &&
               sizeof(std::multimap<std::string, std::string, NoCaseStringCompare>) == 16,
               "native x64 FileManager list/map widths");
 static_assert(sizeof(FileManager) == 0xA0, "native x64 FileManager layout changed - revalidate STL widths");
+#elif defined(__LP64__) && defined(_LIBCPP_VERSION)
+// [CHOSEN, not recovered] Native libc++ ports (including Android): string, vector and list
+// are 24 bytes. No total size is pinned and this class does not overlay retail objects.
+static_assert(sizeof(std::string) == 24 && sizeof(std::vector<IArchiveHandler*>) == 24 &&
+              sizeof(std::list<std::string>) == 24,
+              "libc++ FileManager string/vector/list widths");
 #elif defined(__LP64__)
 // [CHOSEN, not recovered] Native Linux x86-64 port on libstdc++: the same
 // native declaration as the MSVC x64 branch, but libstdc++'s containers are wider (list 24, map and
