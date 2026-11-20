@@ -2,6 +2,7 @@
 // Higher accessors use the documented native interface where original Node slots remain incomplete.
 #include "Core/X87Emu.h"
 #include "Bf2TransformNode.h"
+#include "../External/BFMeme/TransformLayout.h"
 #if !DEDICATED
 #include "Bf2ButtonNode.h"
 #include "../External/BFMeme/NodeState.h"
@@ -204,8 +205,7 @@ bool Bf2TransformNode::update(System* system, const NodeState* state,
         target = target->getChild(0);
     }
 
-    const Rect transformed = {bounds->x + position.x, bounds->y + position.y,
-        size.x, size.y, bounds->z};
+    const Rect transformed = layoutTransformBounds(system, this, *bounds, position, size);
     bool inside = false;
     if (state->target < 0.0f) {
         const float* pointer = system->getPointerPosition();

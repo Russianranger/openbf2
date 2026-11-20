@@ -6,6 +6,7 @@
 #define AI_AIDLL_AI_AIKNOWLEDGE_WEAPONINFOMANAGER_H
 
 #include "../../../../Core/SpHandlePool.h"
+#include <vector>
 
 namespace dice {
 namespace hfe {
@@ -14,8 +15,9 @@ namespace ai {
 // The recovered pooled type is defined in WeaponInfo.h. The manager stores only WeaponInfo pointers
 // so the forward declaration remains sufficient here.
 class WeaponInfo;
+class IWeapon;
 
-// sizeof == 4, from `operator new(4u)`.
+// Native owner of live and retired weapon records; rebuilt AI only.
 class WeaponInfoManager
 {
 public:
@@ -32,11 +34,18 @@ public:
     bool        changeInformation(Handle handle, WeaponInfo* info);
     bool        swapInformation(Handle a, Handle b);
     bool        reset();
+    // [CHOSEN, not recovered] Invalidates every record built on the given engine weapon.
+    int         releaseWeapon(const IWeapon* weapon);
+    // Run only after an AI update returns, when temporary borrowed pointers are gone.
+    void        collectRetired();
+    unsigned int retiredCount() const { return static_cast<unsigned int>(m_retired.size()); }
 
     static WeaponInfoManager* m_instance;
 
 private:
     /* +0x00 */ Pool* m_pool;
+    std::vector<WeaponInfo*> m_retired;
+    void retire(WeaponInfo* info);
 };
 
 } // namespace ai

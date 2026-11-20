@@ -71,6 +71,7 @@
 #include "BF2FrameInterpolator.h"           // +0x1C client-only object; ctor real, three methods remain [FRONTIER]
 #if !DEDICATED
 #include "../../RendMisc/IRenderView.h"
+#include "../../Menu/HudWidescreen.h"
 #include "../../RendMisc/IRenderer.h"
 #include "IVideoOptions.h"
 #include "../HudInformationLayer.h"
@@ -460,6 +461,8 @@ bool BF2Engine::init(const std::string& commandLine)
         return false;
 
 #if !DEDICATED
+    hud::widescreen::configureMod(settings->stringGet("GSModDirectory", "mods/bf2"));
+
     // BF2.exe 0x40C190, straight after parseParameters: the single-instance gate. The guard's flag
     // is CreateMutexA("Battlefield2_Instance_Mutex") not reporting ERROR_ALREADY_EXISTS; a second
     // instance may only continue when GSAllowMultipleInstances is set. Neither dedicated image has
@@ -2531,10 +2534,11 @@ void BF2Engine::handleEvent(EventCategory category, unsigned int id, EventNode* 
         const unsigned int packed = *static_cast<const unsigned int*>(data);
         const int x = static_cast<int>(packed >> 16);
         const int y = static_cast<int>(packed & 0xFFFF);
-        if (menuLogic && menuLogic->getClassId() == CID_MainMenuLogic)
+        if (menuLogic)
         {
             menuLogic->onResize(x, y);                              // IMenuLogic +0x44
-            host->setFlagE80(true);                                 // +0x274
+            if (menuLogic->getClassId() == CID_MainMenuLogic)
+                host->setFlagE80(true);                             // +0x274
         }
         host->setViewportSize(x, y);                                // +0x1D8 (0x409860 pushes both halves)
     }

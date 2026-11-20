@@ -6,7 +6,9 @@ package com.mackillergr.bf2;
  * View pixel coordinates are transformed through the letterbox/fitted game
  * content rectangle to game coordinates, and then back into SDL's window
  * coordinates. Win32OnSdl.cpp maps SDL mouse positions to BF2 engine sizes.
- * With Stage3.7's native 2340x1080 launch resolution the transform is 1:1.
+ * Native-size launches are 1:1. These are full drawable coordinates; SwiffPlayer
+ * applies its centered 4:3 menu rectangle once, after the SDL window transform.
+ * The in-game HUD and world still occupy the full drawable.
  */
 public final class MenuPointerMapper {
     private MenuPointerMapper() { }

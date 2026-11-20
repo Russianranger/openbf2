@@ -76,6 +76,14 @@ namespace gameswf
 		s_use_cache_files = use_cache;
 	}
 
+	// [CHOSEN, not recovered] See gameswf.h; consumed by movie_root::set_display_viewport.
+	static float	s_display_quality_scale = 1.0f;
+
+	void	set_display_quality_scale(float scale)
+	{
+		s_display_quality_scale = (scale > 1.0f) ? scale : 1.0f;
+	}
+
 
 	// Keep a table of loader functions for the different tag types.
 	static hash<int, loader_function>	s_tag_loaders;
@@ -1067,6 +1075,9 @@ namespace gameswf
 			float	scale_x = m_viewport_width / TWIPS_TO_PIXELS(m_def->m_frame_size.width());
 			float	scale_y = m_viewport_height / TWIPS_TO_PIXELS(m_def->m_frame_size.height());
 			m_pixel_scale = fmax(scale_x, scale_y);
+			// [CHOSEN, not recovered] Issue #42: curve precision follows drawable pixels.
+			if (s_display_quality_scale != 1.0f)
+				m_pixel_scale *= s_display_quality_scale;
 		}
 
 
@@ -2452,6 +2463,7 @@ namespace gameswf
 		f->read(in, tag_type, m);
 
 		m->add_font(font_id, f);
+		fontlib::hidpi_register_font(f);	// [CHOSEN, not recovered] HiDPI menu text
 
 		// Automatically keeping fonts in fontlib is
 		// problematic.  The app should be responsible for
@@ -6187,6 +6199,7 @@ namespace gameswf
 			{
 				// Expose this font for export.
 				m->export_resource(tu_string(symbol_name), f);
+				fontlib::hidpi_register_exported_font(symbol_name, f);
 			}
 			else if (character_def* ch = m->get_character_def(id))
 			{

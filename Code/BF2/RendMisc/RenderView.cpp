@@ -381,9 +381,12 @@ void RenderView::setViewMatrix(const float* m16)
 float* RenderView::getViewport() { return &m_viewportX; }
 void RenderView::setAdjustedFov(float radians)
 {
+    // [CHOSEN, not recovered] Issue #33, following marekzajac97/BF2-HUD-fix.
+    // Retain this Android port's arithmetic and extend only the widescreen cap.
+    constexpr float wideAspect = 2560.0f / 1080.0f;
     float scale;
-    if (m_aspect <= 0.5625f)
-        scale = 1.7777778f;
+    if (m_aspect <= 1.0f / wideAspect)
+        scale = wideAspect;
     else if (m_aspect >= 0.80000001f)
         scale = 1.3333334f;
     else {

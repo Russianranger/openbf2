@@ -96,8 +96,16 @@ bool BAPWrapperLookAt::execute(Bot* bot, bool& ok, bool& done)
         bapinline::normalize(dir);
     } else {
         IPIMobile* targetMobile = target->getMobile();
-        IPIArmament* armament = self->getArmament();
-        WeaponInfo* weapon = WeaponInfoManager::m_instance->getInformation(armament->getWeapon(armament->getActiveWeapon()));
+        IPIArmament* armament = self ? self->getArmament() : 0;
+        WeaponInfo* weapon = armament ? WeaponInfoManager::m_instance->getInformation(
+            armament->getWeapon(armament->getActiveWeapon())) : 0;
+        if (!weapon)
+        {
+            ok = false;
+            done = true;
+            if (m_valid) m_valid->m_value = false;
+            return true;
+        }
         const Mat4& origin = weapon->getProjectileOrigin();
         Vec3 projSpeed = bapinline::vec3(0.0f, 0.0f, 0.0f);
         const bool haveSpeed = armament->getProjectileSpeed(projSpeed);

@@ -62,7 +62,14 @@ bool EntryMouseTurretAimAt::execute(BotScript* script, Bot* bot, bool& ok, bool&
         {
             IPIControlInfo* controlInfo = info->getControlInfo();
             IPIArmament* armament = info->getArmament();
-            WeaponInfo* weapon = WeaponInfoManager::m_instance->getInformation(armament->getWeapon(armament->getActiveWeapon()));
+            WeaponInfo* weapon = armament ? WeaponInfoManager::m_instance->getInformation(
+                armament->getWeapon(armament->getActiveWeapon())) : 0;
+            if (!weapon)
+            {
+                done = true;
+                ok = false;
+                return true;
+            }
             const Mat4& weaponTransformation = weapon->getAbsoluteTransformation();
             IPIMobile* mobile = info->getMobile();
             if (mobile == 0 && !info->isPrimary())

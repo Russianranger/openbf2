@@ -24,14 +24,18 @@ BAPAChangeWeapon::BAPAChangeWeapon(Bot* bot, int weaponIndex, int patternId)
     m_bot = bot;
     m_weaponIndex = weaponIndex;
     m_patternId = patternId;
-    IPIArmament* armament = bapinline::info(bot->getCurrentEquipment())->getArmament();
-    m_weapon = WeaponInfoManager::m_instance->getInformation(armament->getWeapon(weaponIndex));
-    m_controls = 1ULL << (static_cast<unsigned int>(m_weapon->getWeaponActivate()) & 63u);
+    Information* const equipment = bapinline::info(bot->getCurrentEquipment());
+    IPIArmament* armament = equipment ? equipment->getArmament() : 0;
+    m_weapon = armament ? WeaponInfoManager::m_instance->getInformation(armament->getWeapon(weaponIndex)) : 0;
+    if (m_weapon) m_weapon->retainPlanReference();
+    m_controls = m_weapon && !m_weapon->isRetired()
+        ? 1ULL << (static_cast<unsigned int>(m_weapon->getWeaponActivate()) & 63u) : 0;
 }
 
 // ELF 0x1D1030 (D0 0x1D1070)
 BAPAChangeWeapon::~BAPAChangeWeapon()
 {
+    if (m_weapon) m_weapon->releasePlanReference();
 }
 
 // ELF 0x1D10C0. Soldiers: while another slot is active, release fire / alt fire / reload and
@@ -39,6 +43,12 @@ BAPAChangeWeapon::~BAPAChangeWeapon()
 // Vehicles: press the activation input (Input::setInput inlined with its range check) and finish.
 bool BAPAChangeWeapon::execute(Bot* bot, bool& ok, bool& failed)
 {
+    if (!m_weapon || m_weapon->isRetired())
+    {
+        ok = false;
+        failed = true;
+        return true;
+    }
     Information* info = bapinline::info(bot->getCurrentEquipment());
     if (!info) {
         ok = false;

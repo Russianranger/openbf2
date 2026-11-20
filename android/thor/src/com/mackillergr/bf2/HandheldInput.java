@@ -142,6 +142,8 @@ final class HandheldInput implements Choreographer.FrameCallback, InputManager.I
         previousFrame = now; float speed = dt * (menu ? width * .65f : 850f);
         float dx = lookX * speed, dy = lookY * speed;
         if (menu) {
+            // Full window coordinates, like touch; SwiffPlayer maps Flash margins itself.
+            // Keep HUD cursors full-width for spawn and commander screens.
             x = Math.max(0, Math.min(width - 1, x + dx)); y = Math.max(0, Math.min(height - 1, y + dy));
             SDLActivity.onNativeMouse(0, MotionEvent.ACTION_MOVE, x, y, false);
         } else SDLActivity.onNativeMouse(0, MotionEvent.ACTION_MOVE, dx, dy, true);

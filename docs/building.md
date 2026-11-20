@@ -112,6 +112,10 @@ glibc and the other system dependencies remain dynamic. Pass
 
 ## Client and plugins
 
+Vanilla BF2 automatically fits its in-game HUD to the display. Custom mods use
+their own layouts. Flash menus retain a centered 4:3 viewport. See
+[widescreen HUD](widescreen-hud.md) for attribution and scope.
+
 Use the x86 configuration and Python runtime above:
 
 ```powershell

@@ -76,10 +76,23 @@ public:
     // IAIObjectEnvironment::hasIndirectLineOfFire).
     IWeapon* getWeapon() const { return m_weapon; }
 
+    // [CHOSEN, not recovered] Native recycling fix: plans pin records, not engine weapons.
+    // Retired records may only be inspected for validity; no engine call is permitted.
+    bool isRetired() const { return m_retired; }
+    void retainPlanReference() { ++m_planReferences; }
+    void releasePlanReference();
+    unsigned int planReferences() const { return m_planReferences; }
+    void retire() { m_retired = true; }
+    void releaseManagerOwnership(); // teardown only: the last plan owner deletes the record
+
 protected:
     friend class IPIArmament;                 // retail IPIArmament::rearm reads both fields directly
     /* +0x04 */ IWeapon* m_weapon;
     /* +0x08 */ float    m_rearmAmount;
+private:
+    unsigned int m_planReferences;
+    bool m_retired;
+    bool m_managerGone;
 };
 
 } } }

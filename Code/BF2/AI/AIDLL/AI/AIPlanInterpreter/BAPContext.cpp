@@ -18,10 +18,19 @@ BAPContext::BAPContext()
 {
 }
 
-// Destroys list nodes without deleting their BotScriptVariable pointers. Call clear
-// before destruction to release variables; the empty destructor preserves that requirement.
+// [CHOSEN, not recovered] Release pins at bot teardown as well as explicit plan replacement.
 BAPContext::~BAPContext()
 {
+    clear();
+}
+
+bool BAPContext::isValid() const
+{
+    for (std::list<BotScriptVariable*>::const_iterator it = m_variables.begin();
+         it != m_variables.end(); ++it)
+        if (*it && !(*it)->isValid())
+            return false;
+    return true;
 }
 
 // Deletes all owned script variables and empties the context.

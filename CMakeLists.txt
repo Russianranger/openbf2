@@ -276,6 +276,7 @@ set(bf2_client_only_sources
     "${BF2_ROOT}/Menu/BfNewListBoxNode.cpp" # recovered list-node storage; publication withheld
     "${BF2_ROOT}/Menu/BfListBoxData.cpp"    # descriptor-attested shared chat/list data; node hooks open
     "${BF2_ROOT}/Menu/Ref2System.cpp"       # recovered UI root construction; publication still gated
+    "${BF2_ROOT}/Menu/HudWidescreen.cpp"    # issue #33: native vanilla HUD policy
     "${BF2_ROOT}/Menu/Font.cpp"
     "${BF2_ROOT}/Menu/DifFontMetadata.cpp"
     "${BF2_ROOT}/Menu/FontLoader.cpp"
@@ -1651,6 +1652,22 @@ set_property(TARGET bf2_syntaxcheck PROPERTY FOLDER "Diagnostics")
 endif()
 
 include(CTest)
+# [TEMP] Issue #33: content-free policy checks, with no renderer or gameplay claim.
+add_executable(bf2_hud_widescreen_check EXCLUDE_FROM_ALL
+    Code/Tests/hud_widescreen_policy.cpp
+    "${BF2_ROOT}/Menu/HudWidescreen.cpp")
+bf2_configure_cpp_target(bf2_hud_widescreen_check)
+bf2_set_platform_compat(bf2_hud_widescreen_check)
+bf2_set_image(bf2_hud_widescreen_check 0)
+if(BUILD_TESTING)
+    add_test(NAME bf2_hud_widescreen_check COMMAND bf2_hud_widescreen_check)
+endif()
+add_executable(bf2_menu_viewport_check EXCLUDE_FROM_ALL Code/Tests/menu_viewport_runtime.cpp)
+bf2_configure_cpp_target(bf2_menu_viewport_check)
+bf2_set_image(bf2_menu_viewport_check 0)
+if(BUILD_TESTING)
+    add_test(NAME bf2_menu_viewport_check COMMAND bf2_menu_viewport_check)
+endif()
 # The focused checks mirror Code/Tests/*.cmd, which are MSVC x86 gates; they are not part of the
 # Linux port (its checks are the dice_py runtime check and the production run).
 if(BUILD_TESTING AND MSVC)
@@ -1771,6 +1788,9 @@ if(BUILD_TESTING AND MSVC)
     set_property(TARGET bf2_run_checks PROPERTY FOLDER "Checks")
 endif()
 
+set(BF2_ANDROID_ENGINE_LIBRARY "${CMAKE_BINARY_DIR}/libmain.so" CACHE FILEPATH
+    "Matching Android engine library used by separately built native plugins")
+
 # [CHOSEN, not recovered] The Flash menu player for the portable client.
 if(BF2_BUILD_LINUX AND BF2_DXVK_ROOT)
     set(bf2_ext "${BF2_EXTERNAL_ROOT}")
@@ -1802,8 +1822,9 @@ if(BF2_BUILD_LINUX AND BF2_DXVK_ROOT)
         "${BF2_DXVK_ROOT}/include/native/windows" "${BF2_ROOT}" "${BF2_ROOT}/PortShim" "${bf2_ext}"
         "${bf2_ext}/gameswf" "${BF2_SDL3_INCLUDE}" "${BF2_VKD3D_INCLUDE}")
     if(ANDROID)
-        target_link_libraries(bf2_swiff_portable PRIVATE "${CMAKE_BINARY_DIR}/libmain.so" SDL3 dl log)
+        target_link_libraries(bf2_swiff_portable PRIVATE "${BF2_ANDROID_ENGINE_LIBRARY}" SDL3 dl log)
         target_link_directories(bf2_swiff_portable PRIVATE "${BF2_SDL3_LIBDIR}")
+        target_link_options(bf2_swiff_portable PRIVATE -Wl,--no-undefined)
     else()
         target_link_libraries(bf2_swiff_portable PRIVATE dl pthread)
     endif()
@@ -1812,7 +1833,7 @@ if(BF2_BUILD_LINUX AND BF2_DXVK_ROOT)
         target_compile_options(bf2_swiff_portable PRIVATE -fno-gnu-unique)
     endif()
     target_compile_options(bf2_swiff_portable PRIVATE -std=gnu++14 -fms-extensions -fpermissive -w
-        -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks
+        -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks -ffp-contract=off
         "-include${BF2_ROOT}/Core/BuildConfig.h" "-include${BF2_ROOT}/Core/PlatformCompat.h"
         "-include${BF2_ROOT}/Core/PortableClient.h" "-include${BF2_ROOT}/PortShim/RendCompat.h")
 endif()
@@ -2001,7 +2022,7 @@ if(BF2_BUILD_LINUX AND BF2_DXVK_ROOT)
     if(ANDROID)
         # The host image is libmain.so, and the plugin takes the engine's symbols from it.
         target_link_libraries(bf2_renddx9_portable PRIVATE "${BF2_DXVK_D3D9}" "${BF2_VKD3D_SHADER}"
-            "${CMAKE_BINARY_DIR}/libmain.so" SDL3 dl log)
+            "${BF2_ANDROID_ENGINE_LIBRARY}" SDL3 dl log)
         target_link_directories(bf2_renddx9_portable PRIVATE "${BF2_SDL3_LIBDIR}")
     else()
         target_link_libraries(bf2_renddx9_portable PRIVATE "${BF2_DXVK_D3D9}" "${BF2_VKD3D_SHADER}" dl pthread)
@@ -2012,7 +2033,7 @@ if(BF2_BUILD_LINUX AND BF2_DXVK_ROOT)
     target_link_libraries(bf2_renddx9_portable PRIVATE "${BF2_FFMPEG_ROOT}/lib/libavformat.a"
         "${BF2_FFMPEG_ROOT}/lib/libavcodec.a" "${BF2_FFMPEG_ROOT}/lib/libavutil.a" -Wl,-Bsymbolic)
     target_compile_options(bf2_renddx9_portable PRIVATE -std=gnu++14 -fms-extensions -fpermissive -w
-        -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks
+        -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks -ffp-contract=off
         "-include${BF2_ROOT}/Core/BuildConfig.h" "-include${BF2_ROOT}/Core/PlatformCompat.h"
         "-include${BF2_ROOT}/Core/PortableClient.h" "-include${BF2_ROOT}/PortShim/RendCompat.h")
 endif()

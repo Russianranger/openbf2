@@ -36,7 +36,7 @@ bool BAPConWeaponReadyToFire::evaluate(Bot* bot)
     WeaponInfo* active = WeaponInfoManager::m_instance->getInformation(armament->getWeapon(armament->getActiveWeapon()));
     bool result = false;
     WeaponInfo* weapon = m_weapon->m_value;
-    if (weapon == active)
+    if (weapon && !weapon->isRetired() && weapon == active)
         result = weapon->isReadyToFire();
     return result;
 }

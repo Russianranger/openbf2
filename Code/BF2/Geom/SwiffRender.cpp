@@ -18,6 +18,7 @@
 #include "../../RendDX9Abi/D3dxEffect.h"
 #include "../RendDX9/RendDX9Base.h"
 #include "../RendDX9/ShaderParameter.h"
+#include "../Menu/MenuViewport.h"
 #if BF2_PLUGIN_ABI_NATIVE
 // RW-266: the host interfaces this file dispatches into, typed in this flavour - the
 // SwiffHost, the Swiff player and the server-logo manager (see hostSlot's wrappers below).
@@ -1233,7 +1234,25 @@ void __fastcall sr_beginDisplay(void* self BF2_EDX_PARAM, int bgUnused, int vpX,
     IDirect3DDevice9* device = static_cast<IDirect3DDevice9*>(renderDevice());
     stateManagerPush();
 
-    device->GetViewport(reinterpret_cast<D3DVIEWPORT9*>(s->savedViewport));
+    auto& output = *reinterpret_cast<D3DVIEWPORT9*>(s->savedViewport);
+    device->GetViewport(&output);
+    const auto menu = ui::MenuViewport::fit(output.Width, output.Height);
+    D3DRECT margins[2];
+    DWORD count = 0;
+    const LONG left = output.X, top = output.Y;
+    const LONG right = left + output.Width, bottom = top + output.Height;
+    if (menu.width < output.Width)
+    {
+        if (menu.x) margins[count++] = {left, top, LONG(left + menu.x), bottom};
+        margins[count++] = {LONG(left + menu.x + menu.width), top, right, bottom};
+    }
+    else if (menu.height < output.Height)
+    {
+        if (menu.y) margins[count++] = {left, top, right, LONG(top + menu.y)};
+        margins[count++] = {left, LONG(top + menu.y + menu.height), right, bottom};
+    }
+    if (count)
+        device->Clear(count, margins, D3DCLEAR_TARGET, 0xff000000, 1.0f, 0);
     s->stencilRef = 1;
 
     const float invMovieW = 1.0f / (float)s->movieWidth;
@@ -1247,6 +1266,8 @@ void __fastcall sr_beginDisplay(void* self BF2_EDX_PARAM, int bgUnused, int vpX,
     vp.Y      = (DWORD)(int)((float)vpY * s->scaleY);
     vp.Width  = (DWORD)(int)((float)vpWidth * s->scaleX);
     vp.Height = (DWORD)(int)((float)vpHeight * s->scaleY);
+    vp.X += output.X + menu.x;
+    vp.Y += output.Y + menu.y;
     vp.MinZ   = 0.0f;
     vp.MaxZ   = 1.0f;
     device->SetViewport(&vp);
@@ -1338,6 +1359,8 @@ void __fastcall sr_endDisplay(void* self BF2_EDX_PARAM)
     }
     if (!s->swiffHost || hostSuppressed(s))
     {
+        static_cast<IDirect3DDevice9*>(renderDevice())->SetViewport(
+            reinterpret_cast<const D3DVIEWPORT9*>(s->savedViewport));
         stateManagerPop();
         return;
     }
@@ -1358,6 +1381,12 @@ void __fastcall sr_endDisplay(void* self BF2_EDX_PARAM)
         sc.top    = (LONG)((float)hostRect[1] * s->scaleY);
         sc.right  = (LONG)((float)hostRect[2] * s->scaleX);
         sc.bottom = (LONG)((float)hostRect[3] * s->scaleY);
+        const auto& output = *reinterpret_cast<const D3DVIEWPORT9*>(s->savedViewport);
+        const auto menu = ui::MenuViewport::fit(output.Width, output.Height);
+        sc.left += output.X + menu.x;
+        sc.right += output.X + menu.x;
+        sc.top += output.Y + menu.y;
+        sc.bottom += output.Y + menu.y;
         device->SetScissorRect(&sc);
         device->SetRenderState(D3DRS_SCISSORTESTENABLE, 1);
 

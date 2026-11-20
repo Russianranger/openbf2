@@ -131,6 +131,8 @@ std::string requestInUseMessage(int type)
 bool BF2HudManager::update(float delta, world::IPlayer* player, Vec3 direction)
 {
     if (menuLogic) return false;
+    // [CHOSEN, not recovered] Issue #33: map/crosshair updates see the current projection.
+    if (ref2System) ref2System->refreshHudLayout();
     if (!m_field15c) {
         if (io::g_falconMouseMode != -1) io::g_falconMouseMode = 0;
     } else if (io::g_falconMouseMode != 2) io::g_falconMouseMode = 1;

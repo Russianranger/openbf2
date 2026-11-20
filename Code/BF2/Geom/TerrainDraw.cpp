@@ -1124,6 +1124,10 @@ void Terrain::drawWaterGrid(float seaLevel)
 // the view-projection, the shadow matrices, the lightmap, the water technique and the sky light.
 void Terrain::drawWaterCell(float x0, float z0, float x1, float z1, void* lightmap)
 {
+    // [CHOSEN, not recovered] Issue #33, following marekzajac97/BF2-HUD-fix.
+    // Preserve queued cells instead of overrunning or reusing their parameters.
+    if (m_waterObjectRingCursor >= 256)
+        return;
     namespace Ra = dx9rend::Ra;
     if (!m_waterGridGeometry)
     {

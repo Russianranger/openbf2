@@ -68,6 +68,9 @@ bool BAPConObjectLineOfFire::evaluate(Bot* bot)
     SensedObject* sensed = bot->getSensedObjectFromHandle(m_object);
     bool result = sensed && !(sensed->m_flags & 8u);
     IPIArmament* armament = self->getArmament();
+    if (!armament || armament->getActiveWeapon() < 0 ||
+        !WeaponInfoManager::m_instance->getInformation(armament->getWeapon(armament->getActiveWeapon())))
+        return false;
     if (armament && armament->getActiveWeapon() != -1) {
         WeaponInfo* weapon = WeaponInfoManager::m_instance->getInformation(armament->getWeapon(armament->getActiveWeapon()));
         if (weapon && sensed && !weapon->getFiresThroughTransparent()) {
@@ -92,6 +95,8 @@ bool BAPConObjectLineOfFire::hasFriendlySoldiersInLineOfFire(Bot* bot, Informati
     BotMain* main = static_cast<BotMain*>(bot);
     IPIArmament* armament = self->getArmament();
     WeaponInfo* weapon = WeaponInfoManager::m_instance->getInformation(armament->getWeapon(armament->getActiveWeapon()));
+    if (!weapon)
+        return true; // No valid muzzle: refuse this firing path.
     const Mat4& origin = weapon->getProjectileOrigin();
     const Vec3& tp = target->getPosition();
     Vec3 dir = bapinline::vec3(tp.x - origin.m[12], tp.y - origin.m[13], tp.z - origin.m[14]);

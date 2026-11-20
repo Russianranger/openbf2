@@ -131,17 +131,17 @@ WeaponInfo* BFInformationCourier::getWeaponInfo(unsigned int handle) const
 // released first, destroyed after, as above.
 void BFInformationCourier::freeWeaponInfo(unsigned int handle)
 {
-    WeaponInfo* const weaponInfo = WeaponInfoManager::m_instance->getInformation(handle);
     WeaponInfoManager::m_instance->freeInformation(handle);
-    if (weaponInfo)
-        delete weaponInfo;
+}
+
+// [CHOSEN, not recovered] see WeaponInfoManager::releaseWeapon.
+int BFInformationCourier::weaponDestroyed(IWeapon* weapon)
+{
+    return WeaponInfoManager::m_instance ? WeaponInfoManager::m_instance->releaseWeapon(weapon) : 0;
 }
 
 void BFInformationCourier::setWeaponInfo(unsigned int handle, WeaponInfo* weaponInfo)
 {
-    WeaponInfo* const previous = WeaponInfoManager::m_instance->getInformation(handle);
-    if (previous)
-        delete previous;
     WeaponInfoManager::m_instance->setInformation(handle, weaponInfo);
 }
 

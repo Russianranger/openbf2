@@ -7,6 +7,7 @@
 #include "BAPInterpreter.h"
 
 #include "BAPEntry.h"
+#include "BAPContext.h"
 #include "../AIBotActionPlan/BotScript.h"
 #include "../AIBot/BotMain.h"
 #include "../AIBotActionPlan/BAPStatement.h"
@@ -65,6 +66,13 @@ BAPInterpreter::~BAPInterpreter()
 //    ok = false, finished = true, return 0.
 bool BAPInterpreter::execute(BotScript* script, Bot* bot, bool& ok, bool& finished)
 {
+    // [CHOSEN, not recovered] Check every dispatch, including nested plan statements.
+    if (bot->getScriptContext() && !bot->getScriptContext()->isValid())
+    {
+        ok = false;
+        finished = true;
+        return true;
+    }
     if (bot->isJustSpawned())
     {
         finished = false;

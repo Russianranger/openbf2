@@ -298,6 +298,8 @@ BF2_CONSOLE_PROPERTY(engineType, int, activeEngine(), setEngineType, getEngineTy
 // template's accessor pair) and the spring axis-fixation flag.
 BF2_CONSOLE_PROPERTY(propRotAxis, int, activeEngine(), setPropRotAxis, getPropRotAxis,
                      kObjTemplVehicleConsoleTag)
+// Upstream B2BF/OpenBF2#77: stock M1A2 springs use this flag for track UV rotation.
+BF2_CONSOLE_FIELD(rotateUV, bool, activeSpring(), m_rotateUV, kObjTemplVehicleConsoleTag)
 BF2_CONSOLE_FIELD(fixAxisSpring, bool, activeSpring(), m_fixAxisSpring, kObjTemplVehicleConsoleTag)
 
 // The gear block - the three named dwords of the six-dword gap between the two

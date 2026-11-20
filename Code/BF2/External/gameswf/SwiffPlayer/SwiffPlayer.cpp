@@ -8,6 +8,8 @@
 
 #include "../../../../RendDX9Abi/BfMemory.h"
 #include "../../../../RendDX9Abi/HfeAbi.h"
+#include "../../../../SwiffPlayerAbi/HiDpiGlyphs.h"
+#include "../../../Menu/MenuViewport.h"
 #include "../../../../RendDX9Abi/Vc71String.h"   // retained fixed-layout internal strings
 #include "../../../../RendDX9Abi/Vc71Vector.h"   // the +1104 queued-mouse vector
 
@@ -9281,6 +9283,20 @@ struct MouseState { int x; int y; int buttons; };
 // Reinterpret a float's bits as a dword (updateTime/line_style_width pass floats through dword slots).
 inline unsigned floatBits(float f) { unsigned d; ::memcpy(&d, &f, 4); return d; }
 
+// [CHOSEN, not recovered] Issue #42: flatten SWF curves for the output pixels.
+static float swiffDisplayQualityScale(void* host, int movieW, int movieH)
+{
+    if (!host || movieW <= 0 || movieH <= 0)
+        return 1.0f;
+    unsigned vpW = 0, vpH = 0;
+    hostGetViewportSize(host, &vpW, &vpH);
+    const auto viewport = MenuViewport::fit(vpW, vpH);
+    const float sx = static_cast<float>(viewport.width) / static_cast<float>(movieW);
+    const float sy = static_cast<float>(viewport.height) / static_cast<float>(movieH);
+    float s = sx > sy ? sx : sy;
+    return s > 1.0f ? (s < 16.0f ? s : 16.0f) : 1.0f;
+}
+
 } // anonymous namespace
 
 
@@ -9597,6 +9613,10 @@ bool SwiffPlayer::loadMovie(const char* movieName)
     // Registration adapts the engine bindings to this gameswf version's fn_call ABI.
     buildAsGraph();
 
+    // [CHOSEN, not recovered] Issue #42: rebuild waiting font pages after outlines load.
+    if (auto* listener = static_cast<openbf2::GlyphListener*>(
+            classManager->getSimpleSingleton(openbf2::glyphListenerName)))
+        listener->movieLoaded();
     ::renddx9abi::logf("[SwiffPlayer::loadMovie] returning true");
     return true;
 }
@@ -9671,7 +9691,9 @@ void SwiffPlayer::update(float deltaTime)
     }
 
     gameswf::movie_interface* mi = static_cast<gameswf::movie_interface*>(movie_instance);
+    gameswf::set_display_quality_scale(swiffDisplayQualityScale(swiff_host, movie_width, movie_height));
     mi->set_display_viewport(0, 0, movie_width, movie_height);      // typed (2006 4-arg)
+    gameswf::set_display_quality_scale(1.0f);
     mi->advance(deltaTime);
     if (traceUpdate)   // [TEMP] stream tracer
         ::renddx9abi::logf("[stream]   viewport=(0,0,%d,%d) after advance: frame=%d/%d play=%d mouse=(%d,%d,%d)",
@@ -9830,24 +9852,15 @@ void SwiffPlayer::renderSetPairState(int a, int b)
         rcSetPairState(render_context, a, b);
 }
 
-// notify_mouse. Scales the raw (x,y) from the SwiffHost viewport into movie space,
-// clamps, feeds the movie and the renderer.
+// Drawable pixels enter here. Margins remain outside the movie during button release.
 void SwiffPlayer::notifyMouse(int x, int y, int buttons)
 {
     unsigned vpW = 1, vpH = 1;
     if (swiff_host)
         hostGetViewportSize(swiff_host, &vpW, &vpH);               // +0x1DC, two out-params
-    if (vpW == 0) vpW = 1;
-    if (vpH == 0) vpH = 1;
-
-    const double sx = static_cast<double>(static_cast<unsigned>(getMovieWidth()))  / static_cast<double>(vpW);
-    const double sy = static_cast<double>(static_cast<unsigned>(getMovieHeight())) / static_cast<double>(vpH);
-    int mx = static_cast<int>(static_cast<double>(x) * sx);
-    int my = static_cast<int>(sy * static_cast<double>(y));
-    if (mx < 0) mx = 0;
-    if (mx > movie_width)  mx = movie_width;
-    if (my < 0) my = 0;
-    if (my > movie_height) my = movie_height;
+    const auto viewport = MenuViewport::fit(vpW, vpH);
+    int mx = -32768, my = -32768;
+    viewport.moviePoint(x, y, getMovieWidth(), getMovieHeight(), mx, my);
     mouse_x = mx;
     mouse_y = my;
     // [TEMP] RW-89 mouse tracer (BF2_SWIFFPLAYER_ASLOG): every button transition the host delivers,

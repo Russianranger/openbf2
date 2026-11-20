@@ -1,5 +1,5 @@
 // Variable scope for a bot action plan. [INFERRED] Source placement.
-// Call clear to delete the owned variables before destruction; the destructor frees only list nodes.
+// Owns its variables, including weapon references held across AI ticks.
 
 #ifndef AI_AIDLL_AI_AIPLANINTERPRETER_BAPCONTEXT_H       // [INFERRED] guard style
 #define AI_AIDLL_AI_AIPLANINTERPRETER_BAPCONTEXT_H
@@ -15,14 +15,17 @@ class BotScriptVariable
 {
 public:
     virtual ~BotScriptVariable();       // - the vptr store, nothing more
+    // [CHOSEN, not recovered] Invalid engine dependencies stop a retained plan before dispatch.
+    virtual bool isValid() const { return true; }
 };
 
 class BAPContext
 {
 public:
     BAPContext();
-    ~BAPContext();                      // - , and it leaks; see above
+    ~BAPContext();
     void clear();
+    bool isValid() const;
 
     // [CHOSEN, not recovered] added by ai-w1-e-fire (coord/ai-requests.md 2026-11-01); the owner may
     // rename it. Every plan variable the fire patterns create is put at the front of the list:

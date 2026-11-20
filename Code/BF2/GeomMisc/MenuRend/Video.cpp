@@ -16,6 +16,9 @@
 #include "../../RendDX9/RendDX9Base.h"
 
 #include <windows.h>
+#if defined(__ANDROID__)
+#include <limits.h>
+#endif
 #include <stddef.h>
 #include <string.h>
 #include <stdio.h>
@@ -378,10 +381,15 @@ bool Video::open(const char* path)
     if (!path)
         return false;
 
-    char exePath[MAX_PATH];
+#if defined(__ANDROID__)
+    constexpr DWORD maxPath = PATH_MAX;
+#else
+    constexpr DWORD maxPath = MAX_PATH;
+#endif
+    char exePath[maxPath];
     exePath[0] = 0;
-    ::GetModuleFileNameA(0, exePath, MAX_PATH);
-    char exeDir[MAX_PATH + 1];
+    ::GetModuleFileNameA(0, exePath, maxPath);
+    char exeDir[maxPath + 1];
     exeDir[0] = 0;
     {
         const char* bs = ::strrchr(exePath, '\\');
@@ -399,10 +407,10 @@ bool Video::open(const char* path)
     const char* rootUsed = "the executable directory";
     if (!openUnderRoot(exeDir, path))
     {
-        char cwd[MAX_PATH + 1];
+        char cwd[maxPath + 1];
         cwd[0] = 0;
-        const DWORD n = ::GetCurrentDirectoryA(MAX_PATH, cwd);
-        if (n && n < MAX_PATH)
+        const DWORD n = ::GetCurrentDirectoryA(maxPath, cwd);
+        if (n && n < maxPath)
         {
             if (cwd[n - 1] != '\\' && cwd[n - 1] != '/')
             {

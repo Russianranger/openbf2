@@ -35,7 +35,7 @@ bool BAPConWeaponDetonatorIsActive::evaluate(Bot* bot)
     armament->getWeapon(armament->getActiveWeapon());
     WeaponInfo* active = WeaponInfoManager::m_instance->getInformation(armament->getWeapon(armament->getActiveWeapon()));
     bool result = false;
-    if (m_weapon->m_value == active)
+    if (m_weapon->m_value && !m_weapon->m_value->isRetired() && m_weapon->m_value == active)
         result = m_weapon->m_value->getWeaponState() == 1;
     return result;
 }
