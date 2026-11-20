@@ -4,18 +4,18 @@ The ARM64 test application combines the Android SDL/Vulkan client from mackiller
 
 ## Update an existing installation
 
-Install 0.1.3 (version code 4) over 0.1.2 or an earlier signed Thor build. Android checks the original signing identity before installing the update. An in-place update preserves imported game files and the private Offline career database.
+Install 0.1.4 (version code 5) over 0.1.3 or an earlier signed Thor build. Android checks the original signing identity before installing the update. An in-place update preserves imported game files and the private Offline career database.
 
 ## Play an offline round
 
 1. Open **Setup** to choose your player name. On a first installation, choose **Import Battlefield 2 installation** and select the folder containing `mods/bf2`, `python` and `pylib-2.3.4.zip`. Existing imports appear automatically.
-2. In **Deployment**, choose **Select map** and adjust the two bot counts. The launcher reads faction names and preview art from the imported map. The choices are maps with 16-player co-op placement data. The default is eight bots per side. The roster excludes your local soldier.
-3. Choose **Deploy**. At the team, kit and spawn screens, move the right stick and click with RT. The local server uses 50% bot difficulty. The stock map loading music fades as direct gameplay starts.
+2. In **Deployment**, choose **Select map**, then **Map size**. Each entry identifies the installed layout and whether it supports bots. Choose the two faction counts independently on a bot-supported layout. The default is eight per side, in addition to your soldier. **Solo exploration** opens an installed Conquest layout with zero bots. Your selected roster returns when you switch back to a bot-supported layout.
+3. Choose **Deploy**. At the team, kit and spawn screens, move the right stick and click with RT. The local server uses 50% bot difficulty. The game reads the music named in the map descriptor and fades it as gameplay starts.
 4. Under **Controls → Controller bindings**, assign a Battlefield action to a button or key. You can also assign an action to a hold. With the default Xbox layout, tap B to crouch, hold B for prone, then tap B to stand. Crouch also toggles on the touchscreen. The launcher remembers your **Show touch controls** setting.
 5. Tap the gear or hold Start to open the game options. **Return to game** closes the panel, **Export logs** opens the Android save dialog, and **Return to launcher** leaves the current match available. Use **Resume match** to return with updated controls. To switch maps, use **End current match**, confirm, then deploy again.
 6. Finish a round and check **Career** for completed rounds, score, kills, deaths and rank. LAN sessions and unfinished rounds do not earn offline career credit.
 
-The [controller guide](https://github.com/Russianranger/openbf2/blob/android-engine/docs/android-thor/CONTROLS.md) uses the logical button names from the Thor's Xbox mode. **LAN** hosts Conquest or joins a compatible server. Joining may require a product key from your own installation.
+The [controller guide](https://github.com/Russianranger/openbf2/blob/android-engine/docs/android-thor/CONTROLS.md) uses the logical button names from the Thor's Xbox mode. **LAN** hosts Conquest at the chosen map size or joins a compatible server. Joining may require a product key from your own installation.
 
 ## Build and sign
 
@@ -24,7 +24,7 @@ Use a Linux x86-64 host, Git, Python 3, Make, CMake, Ninja, JDK 17 or 21, Androi
 ```sh
 android/build_thor.sh \
   --keystore /private/keys/openbf2.p12 --alias openbf2-thor \
-  --storepass /private/keys/store.pass --previous-apk /private/releases/OpenBF2-Thor-0.1.2-arm64.apk \
+  --storepass /private/keys/store.pass --previous-apk /private/releases/OpenBF2-Thor-0.1.3-arm64.apk \
   --output out/OpenBF2-Thor-arm64.apk
 ```
 
@@ -37,6 +37,24 @@ The build checks out the pinned Android engine under `ports/android-engine`. It 
 | Russianranger Thor design baseline | `4af39ef4157bc1566a32bbb4021ad2f2c3c8a239` |
 | kr4uzi gameplay and bot engine | `02cc5ac818582689efe3452755f40e5f55edc2c7` |
 | mackillerGR Stage 3.7 Android branch | `aefe0f802d9969fa03c0ebad9c9af742dc6231fd` |
+
+## 0.1.4 map sizes, vehicles and Singleplayer
+
+The signed ARM64 update is 50,198,162 bytes with SHA-256 `c17dbf4c2451343a2391b1d1e3e07c336bfea95138e112779c4b3325abf79ece`. It uses the original 0.1.3 signing certificate and passed Android v3 signature verification and 16 KiB native ZIP alignment. This branch pins the [released Android engine](https://github.com/Russianranger/openbf2/commit/dd739a2e14c754f40d5bd43ce728d16c5a580c29).
+
+Stock Battlefield 2 1.50 includes bot navigation and co-op placements for the 16-player versions of Karkand and Gulf of Oman. The stock 32- and 64-player Conquest versions can be explored alone. To play a larger layout with bots:
+
+1. On a device with Internet access, download a pack with authored co-op maps, such as [Battlefield 2 – 64 Coop – 20 Year Anniversary v1.3](https://www.moddb.com/mods/battlefield-2-64-coop-20-year-anniversary/downloads/battlefield-2-64-coop-20-year-anniversary). Extract it and make its `Levels` folder available on the Thor.
+2. Open **Setup → Import bot map pack**. Select the extracted pack folder containing `Levels`, or the `Levels` folder itself. The importer copies complete level archives and their map information into a separate location. Your base Battlefield installation is still required.
+3. Open **Deployment → Select map → Map size**. Choose a size marked **Bots supported (map pack)**. The base game's layouts remain available. The importer supports self-contained map data using base BF2 assets. A mod requiring additional global objects or scripts may also need those dependencies.
+
+The importer accepted all 22 maps in the published v1.3 pack (archive MD5 `65720fea72218852962463ffedb69d65`). In headless matches, all 16 bots moved on the 32-player Gulf of Oman and 64-player Karkand layouts alongside a local test soldier. With the imported pack mounted alongside stock, Gulf of Oman 64 ran with one local test soldier and eight bots per team. All 16 bots moved and one kill was recorded. Stock Karkand Singleplayer also spawned its selected three and five bots, and stock 64-player Conquest spawned the test soldier with no bots.
+
+The stock map descriptors for Karkand, Gulf of Oman and Road to Jalalabad all request the MEC theme. Dalian Plant requests the China theme and Midnight Sun requests the US theme. The exported log identifies the requested map, the music resource and playback errors.
+
+The first-run **Singleplayer** button now opens BF2's map selection screen. Select a map and press **Start**. **Deploy** in the Android launcher still starts the selected match directly. On foot, using a weapon's sights switches to the authored aim-down-sights HUD and hides the hip-fire reticle. The M4 optic dot, hit feedback and vehicle reticles are preserved.
+
+The Android effect loader now uploads the complete vehicle lighting structure and all seven texture-coordinate matrices. In a software Vulkan test, the old shader drew 100,854 black Humvee pixels. The corrected shader lit 100,577 pixels across the same model silhouette. With the original M1A2 and T-90 meshes and textures, both animated UV phases matched the CPU reference at all four detail levels, including draws following stale texture transforms. Extracted APK libraries passed 20 aim-down-sights checks, 88 map-file and metadata checks, and 240 stock soldier-kit checks. Loading music tests used the original map descriptors, generated Ogg samples and the packaged audio engine to check track selection and fade. Physical rendering and full-match play with the new APK remain handset checks.
 
 ## 0.1.3 deployment and terrain
 
